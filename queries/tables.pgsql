@@ -87,15 +87,39 @@ JOIN (
 			END,
 			'generated_column': CASE
 			    WHEN a.attgenerated = 's' THEN
-			        json_object(
+			        JSON_OBJECT(
 			            'type': 'Stored',
 			            'expression': pg_catalog.pg_get_expr(def.adbin, def.adrelid)
 			        )
 			END,
 			'identity_column': CASE
-			    WHEN a.attidentity = 'a' THEN 'Always'
-			    WHEN a.attidentity = 'd' THEN 'Default'
-			END
+                WHEN a.attidentity IN ('a','d') THEN
+                    JSON_OBJECT(
+                        'identity_generation': CASE
+                            WHEN a.attidentity = 'a' THEN 'Always'
+                            WHEN a.attidentity = 'd' THEN 'Default'
+                        END,
+                        'sequence_options': (
+                            SELECT JSON_OBJECT(
+                                'increment': s.seqincrement,
+                                'min_value': s.seqmin,
+                                'max_value': s.seqmax,
+                                'start_value': s.seqstart,
+                                'cache': s.seqcache,
+                                'is_cycle': s.seqcycle
+                            )
+                            FROM pg_catalog.pg_sequence s
+                            JOIN pg_catalog.pg_depend AS sd
+                                 ON sd.classid = 'pg_class'::REGCLASS
+                                 AND s.seqrelid = sd.objid
+                                 AND sd.refclassid = 'pg_class'::REGCLASS
+                                 AND sd.deptype = 'i'
+                            WHERE
+                                sd.refobjid = a.attrelid
+                                AND sd.refobjsubid = a.attnum
+                        )
+                    )
+            END
 		) ORDER BY a.attnum) AS "columns"
 	FROM pg_catalog.pg_attribute a
 	JOIN pg_catalog.pg_type t

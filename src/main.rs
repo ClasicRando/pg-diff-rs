@@ -132,7 +132,13 @@ pub enum GeneratedColumn {
 }
 
 #[derive(Debug, Deserialize)]
-pub enum IdentityColumn {
+pub struct IdentityColumn {
+    identity_generation: IdentityGeneration,
+    sequence_options: SequenceOptions,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum IdentityGeneration {
     Always,
     Default,
 }
@@ -299,35 +305,37 @@ impl PolicyCommand {
 #[derive(Debug)]
 pub struct Sequence {
     name: SchemaQualifiedName,
-    data_type: SequenceType,
+    data_type: String,
+    owner: Option<SequenceOwner>,
+    sequence_options: SequenceOptions,
+}
+
+impl <'r> FromRow<'r, PgRow> for Sequence {
+    fn from_row(row: &'r PgRow) -> Result<Self, SqlxError> {
+        let name: Json<SchemaQualifiedName> = row.try_get("name")?;
+        let data_type = row.try_get("data_type")?;
+        let owner: Option<Json<SequenceOwner>> = row.try_get("owner")?;
+        let sequence_options: Json<SequenceOptions> = row.try_get("sequence_options")?;
+        Ok(Self {
+            name: name.0,
+            data_type,
+            owner: owner.map(|j| j.0),
+            sequence_options: sequence_options.0,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SequenceOptions {
     increment: i64,
     min_value: i64,
     max_value: i64,
     start_value: i64,
     cache: i64,
     is_cycle: bool,
-    owner: Option<SequenceOwner>,
 }
 
-#[derive(Debug, Default)]
-pub enum SequenceType {
-    Smallint,
-    Integer,
-    #[default]
-    Bigint,
-}
-
-impl SequenceType {
-    fn type_name(&self) -> &'static str {
-        match self {
-            SequenceType::Smallint => "int2",
-            SequenceType::Integer => "int4",
-            SequenceType::Bigint => "int8",
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SequenceOwner {
     table_name: SchemaQualifiedName,
     column_name: String,
@@ -405,13 +413,14 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let tables = get_tables(pool, &schemas).await?;
     let constraints = get_constraints(pool, &schemas).await?;
     let indexes = get_indexes(pool, &schemas).await?;
+    let sequences = get_sequences(pool, &schemas).await?;
     Ok(Database {
         schemas,
         udts: vec![],
         tables,
         constraints,
         indexes,
-        sequences: vec![],
+        sequences,
         functions: vec![],
         triggers: vec![],
         views: vec![],
@@ -465,6 +474,18 @@ async fn get_indexes(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Index>, Pg
         }
     };
     Ok(indexes)
+}
+
+async fn get_sequences(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Sequence>, PgDiffError> {
+    let sequence_query = include_str!("./../queries/sequences.pgsql");
+    let sequences = match query_as(sequence_query).bind(schemas).fetch_all(pool).await {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load sequences");
+            return Err(error.into())
+        }
+    };
+    Ok(sequences)
 }
 
 async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
