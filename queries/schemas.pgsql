@@ -6,7 +6,7 @@ WHERE
     AND n.nspname !~ '^pg_temp'
     -- Exclude schemas owned by extensions
     AND NOT EXISTS (
-        SELECT d.objid
+        SELECT NULL
         FROM pg_catalog.pg_depend AS d
         WHERE
             d.classid = 'pg_namespace'::REGCLASS

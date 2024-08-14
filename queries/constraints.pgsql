@@ -5,29 +5,24 @@ WITH table_columns AS (
 )
 SELECT
 	co.conname AS "name",
-	to_jsonb(json_object(
+	TO_JSONB(JSON_OBJECT(
 		'schema_name': tn.nspname,
 		'local_name': t.relname
 	)) AS "owning_table",
-	to_jsonb(CASE co.contype
+	TO_JSONB(CASE co.contype
 		WHEN 'c' THEN
-			json_object(
+			JSON_OBJECT(
 				'type': 'Check',
 				'expression': pg_get_constraintdef(co.oid),
 				'columns': col."columns",
 				'is_inheritable': NOT co.connoinherit
 			)
-		WHEN 'p' THEN
-			json_object(
-				'type': 'PrimaryKey',
-				'columns': col."columns"
-			)
 		WHEN 'f' THEN
-			json_object(
+			JSON_OBJECT(
 				'type': 'ForeignKey',
 				'columns': col."columns",
 				'ref_table': (
-					SELECT json_object(
+					SELECT JSON_OBJECT(
 						'schema_name': tn.nspname,
 						'local_name': t.relname
 					)
@@ -36,7 +31,7 @@ SELECT
 					WHERE t.oid = co.confrelid
 				),
 				'ref_columns': (
-					SELECT ARRAY_AGG(a.attname)
+					SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
 					FROM table_columns a
 					WHERE
 						a.attrelid = co.conrelid
@@ -48,23 +43,23 @@ SELECT
 					WHEN 's' THEN 'Simple'
 				END,
 				'on_delete': CASE confdeltype
-					WHEN 'a' THEN json_object('type': 'NoAction')
-					WHEN 'r' THEN json_object('type': 'Restrict')
-					WHEN 'c' THEN json_object('type': 'Cascade')
-					WHEN 'n' THEN json_object(
+					WHEN 'a' THEN JSON_OBJECT('type': 'NoAction')
+					WHEN 'r' THEN JSON_OBJECT('type': 'Restrict')
+					WHEN 'c' THEN JSON_OBJECT('type': 'Cascade')
+					WHEN 'n' THEN JSON_OBJECT(
 						'type': 'SetNull',
 						'columns': (
-							SELECT ARRAY_AGG(a.attname)
+							SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
 							FROM table_columns a
 							WHERE
 								a.attrelid = co.conrelid
 								AND a.attnum = ANY(co.confdelsetcols)
 						)
 					)
-					WHEN 'd' THEN json_object(
+					WHEN 'd' THEN JSON_OBJECT(
 						'type': 'SetDefault',
 						'columns': (
-							SELECT ARRAY_AGG(a.attname)
+							SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
 							FROM table_columns a
 							WHERE
 								a.attrelid = co.conrelid
@@ -73,23 +68,23 @@ SELECT
 					)
 				END,
 				'on_update': CASE confupdtype
-					WHEN 'a' THEN json_object('type': 'NoAction')
-					WHEN 'r' THEN json_object('type': 'Restrict')
-					WHEN 'c' THEN json_object('type': 'Cascade')
-					WHEN 'n' THEN json_object(
+					WHEN 'a' THEN JSON_OBJECT('type': 'NoAction')
+					WHEN 'r' THEN JSON_OBJECT('type': 'Restrict')
+					WHEN 'c' THEN JSON_OBJECT('type': 'Cascade')
+					WHEN 'n' THEN JSON_OBJECT(
 						'type': 'SetNull',
 						'columns': (
-							SELECT ARRAY_AGG(a.attname)
+							SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
 							FROM table_columns a
 							WHERE
 								a.attrelid = co.conrelid
 								AND a.attnum = ANY(co.confdelsetcols)
 						)
 					)
-					WHEN 'd' THEN json_object(
+					WHEN 'd' THEN JSON_OBJECT(
 						'type': 'SetDefault',
 						'columns': (
-							SELECT ARRAY_AGG(a.attname)
+							SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
 							FROM table_columns a
 							WHERE
 								a.attrelid = co.conrelid
@@ -98,8 +93,25 @@ SELECT
 					)
 				END
 			)
+		WHEN 'p' THEN
+			JSON_OBJECT(
+				'type': 'PrimaryKey',
+				'columns': col."columns",
+                'index_parameters': JSON_OBJECT(
+                    'include': inc."columns",
+                    'with': (
+                        SELECT
+                            JSON_OBJECT_AGG(
+                                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
+                                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
+                            )
+                        FROM UNNEST(ic.reloptions) WITH ORDINALITY iopt(opt, ord)
+                    ),
+                    'tablespace': its.spcname
+                )
+			)
 		WHEN 'u' THEN
-			json_object(
+			JSON_OBJECT(
 				'type': 'Unique',
 				'columns': col."columns",
 				'are_nulls_distinct': (
@@ -108,33 +120,60 @@ SELECT
 					WHERE
 						i.indexrelid = co.conindid
 						AND i.indisunique
-				)
+				),
+                'index_parameters': JSON_OBJECT(
+                    'include': inc."columns",
+                    'with': (
+                        SELECT
+                            JSON_OBJECT_AGG(
+                                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
+                                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
+                            )
+                        FROM UNNEST(ic.reloptions) WITH ORDINALITY iopt(opt, ord)
+                    ),
+                    'tablespace': its.spcname
+                )
 			)
 	END) AS "constraint_type",
 	CASE
 		WHEN co.condeferrable THEN
-			json_object(
+			JSON_OBJECT(
 				'type': 'Deferrable',
 				'is_immediate': co.condeferred
 			)
-		ELSE json_object('type': 'NotDeferrable')
-	END AS "timing",
-	co.conkey
+		ELSE JSON_OBJECT('type': 'NotDeferrable')
+	END AS "timing"
 FROM pg_catalog.pg_constraint co
 JOIN pg_catalog.pg_class t ON t.oid = co.conrelid
 JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace
 LEFT JOIN LATERAL (
-	SELECT ARRAY_AGG(a.attname) as "columns"
+	SELECT ARRAY_AGG(a.attname ORDER BY a.attnum) as "columns"
 	FROM table_columns a
 	WHERE
 		a.attrelid = co.conrelid
 		AND a.attnum = ANY(co.conkey)
 ) AS col ON true
+LEFT JOIN pg_catalog.pg_index i
+	ON co.conindid = i.indexrelid
+LEFT JOIN pg_catalog.pg_class AS ic
+    ON i.indexrelid = ic.oid
+LEFT JOIN pg_catalog.pg_tablespace its
+	ON ic.reltablespace = its.oid
+LEFT JOIN LATERAL (
+	SELECT ARRAY_AGG(a.attname ORDER BY ikey.ord) AS "columns"
+	FROM UNNEST(i.indkey) WITH ORDINALITY AS ikey(attnum, ord)
+	JOIN pg_catalog.pg_attribute a
+		ON a.attrelid = t.oid
+		AND a.attnum = ikey.attnum
+	WHERE
+		ikey.ord > indnkeyatts
+) AS inc ON true
 WHERE
-    tn.nspname = $1
+    tn.nspname = ANY($1)
+    AND co.contype IN ('c','f','p','u')
     -- Exclude tables owned by extensions
     AND NOT EXISTS (
-        SELECT d.objid
+        SELECT NULL
         FROM pg_catalog.pg_depend AS d
         WHERE
             d.classid = 'pg_class'::REGCLASS
