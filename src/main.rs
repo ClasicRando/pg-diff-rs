@@ -69,15 +69,9 @@ pub struct Udt {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum UdtType {
-    Enum {
-        labels: Vec<String>,
-    },
-    Composite {
-        attributes: Vec<CompositeField>,
-    },
-    Range {
-        subtype: String,
-    },
+    Enum { labels: Vec<String> },
+    Composite { attributes: Vec<CompositeField> },
+    Range { subtype: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,9 +129,7 @@ pub struct Column {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum GeneratedColumn {
-    Stored {
-        expression: String,
-    }
+    Stored { expression: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,7 +152,7 @@ pub struct Constraint {
     timing: ConstraintTiming,
 }
 
-impl <'r> FromRow<'r, PgRow> for Constraint {
+impl<'r> FromRow<'r, PgRow> for Constraint {
     fn from_row(row: &'r PgRow) -> Result<Self, SqlxError> {
         let name = row.try_get("name")?;
         let owning_table: Json<SchemaQualifiedName> = row.try_get("owning_table")?;
@@ -228,10 +220,10 @@ pub enum ForeignKeyAction {
     Restrict,
     Cascade,
     SetNull {
-        columns: Option<Vec<String>>
+        columns: Option<Vec<String>>,
     },
     SetDefault {
-        columns: Option<Vec<String>>
+        columns: Option<Vec<String>>,
     },
 }
 
@@ -245,7 +237,7 @@ pub struct Index {
     parameters: IndexParameters,
 }
 
-impl <'r> FromRow<'r, PgRow> for Index {
+impl<'r> FromRow<'r, PgRow> for Index {
     fn from_row(row: &'r PgRow) -> Result<Self, SqlxError> {
         let name = row.try_get("name")?;
         let owning_table: Json<SchemaQualifiedName> = row.try_get("owning_table")?;
@@ -319,7 +311,7 @@ pub struct Sequence {
     sequence_options: SequenceOptions,
 }
 
-impl <'r> FromRow<'r, PgRow> for Sequence {
+impl<'r> FromRow<'r, PgRow> for Sequence {
     fn from_row(row: &'r PgRow) -> Result<Self, SqlxError> {
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let data_type = row.try_get("data_type")?;
@@ -353,9 +345,34 @@ pub struct SequenceOwner {
 #[derive(Debug)]
 pub struct Function {
     name: SchemaQualifiedName,
+    signature: String,
     definition: String,
     language: String,
-    function_dependencies: Option<Vec<SchemaQualifiedName>>,
+    function_dependencies: Option<Vec<FunctionDependency>>,
+}
+
+impl<'r> FromRow<'r, PgRow> for Function {
+    fn from_row(row: &'r PgRow) -> Result<Self, SqlxError> {
+        let name: Json<SchemaQualifiedName> = row.try_get("name")?;
+        let signature: String = row.try_get("signature")?;
+        let definition: String = row.try_get("definition")?;
+        let language: String = row.try_get("language")?;
+        let function_dependencies: Option<Json<Vec<FunctionDependency>>> =
+            row.try_get("function_dependencies")?;
+        Ok(Self {
+            name: name.0,
+            signature,
+            definition,
+            language,
+            function_dependencies: function_dependencies.map(|j| j.0),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FunctionDependency {
+    name: SchemaQualifiedName,
+    signature: String,
 }
 
 #[derive(Debug)]
@@ -424,6 +441,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let constraints = get_constraints(pool, &schemas).await?;
     let indexes = get_indexes(pool, &schemas).await?;
     let sequences = get_sequences(pool, &schemas).await?;
+    let functions = get_functions(pool, &schemas).await?;
     Ok(Database {
         schemas,
         udts,
@@ -431,7 +449,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
         constraints,
         indexes,
         sequences,
-        functions: vec![],
+        functions,
         triggers: vec![],
         views: vec![],
         extensions: get_extensions(pool).await?,
@@ -444,7 +462,7 @@ async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load schemas");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(schema_names)
@@ -456,7 +474,7 @@ async fn get_udts(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Udt>, PgDiffE
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load udts");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(udts)
@@ -468,19 +486,26 @@ async fn get_tables(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Table>, PgD
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load tables");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(tables)
 }
 
-async fn get_constraints(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Constraint>, PgDiffError> {
+async fn get_constraints(
+    pool: &PgPool,
+    schemas: &[Schema],
+) -> Result<Vec<Constraint>, PgDiffError> {
     let constraints_query = include_str!("./../queries/constraints.pgsql");
-    let constraints = match query_as(constraints_query).bind(schemas).fetch_all(pool).await {
+    let constraints = match query_as(constraints_query)
+        .bind(schemas)
+        .fetch_all(pool)
+        .await
+    {
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load constraints");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(constraints)
@@ -492,7 +517,7 @@ async fn get_indexes(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Index>, Pg
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load indexes");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(indexes)
@@ -504,10 +529,26 @@ async fn get_sequences(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Sequence
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load sequences");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(sequences)
+}
+
+async fn get_functions(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Function>, PgDiffError> {
+    let functions_query = include_str!("./../queries/procs.pgsql");
+    let functions = match query_as(functions_query)
+        .bind(schemas)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load functions");
+            return Err(error.into());
+        }
+    };
+    Ok(functions)
 }
 
 async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
@@ -516,7 +557,7 @@ async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load schemas");
-            return Err(error.into())
+            return Err(error.into());
         }
     };
     Ok(extensions)
