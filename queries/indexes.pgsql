@@ -14,7 +14,7 @@ SELECT
                 SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
                 SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
             )
-        FROM UNNEST(ic.reloptions) WITH ORDINALITY iopt(opt, ord)
+        FROM UNNEST(ic.reloptions) iopt(opt)
     ) AS "with",
     its.spcname AS "tablespace"
 FROM pg_catalog.pg_index AS i

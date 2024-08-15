@@ -61,7 +61,15 @@ SELECT
         WHEN t.relispartition THEN pg_catalog.pg_get_expr(t.relpartbound, t.oid)
         ELSE NULL
     END AS "partition_values",
-    tts.spcname AS "tablespace"
+    tts.spcname AS "tablespace",
+    (
+        SELECT
+           JSON_OBJECT_AGG(
+               SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
+               SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
+           )
+        FROM UNNEST(t.reloptions) t(opt)
+    ) AS "with"
 FROM pg_catalog.pg_class AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.relnamespace = tn.oid
@@ -119,7 +127,9 @@ JOIN (
                                 AND sd.refobjsubid = a.attnum
                         )
                     )
-            END
+            END,
+            'storage': a.attstorage,
+            'compression': a.attcompression
 		) ORDER BY a.attnum) AS "columns"
 	FROM pg_catalog.pg_attribute a
 	JOIN pg_catalog.pg_type t

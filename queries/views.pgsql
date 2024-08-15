@@ -13,16 +13,20 @@ SELECT
 			AND a.attrelid = vc.oid
 	) AS "columns",
 	v.definition AS "query",
-	isv.check_option AS "check_option"
+	(
+		SELECT
+            JSON_OBJECT_AGG(
+                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
+                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
+            )
+		FROM UNNEST(vc.reloptions) t(opt)
+	) AS "options"
 FROM pg_catalog.pg_views v
 JOIN pg_catalog.pg_namespace vn
 	ON v.schemaname = vn.nspname
 JOIN pg_catalog.pg_class vc
     ON v.viewname = vc.relname
 	AND vc.relnamespace = vn.oid
-JOIN information_schema.views isv
-	ON v.schemaname = isv.table_schema
-	AND v.viewname = isv.table_name
 WHERE
     v.schemaname = ANY($1)
     -- Exclude tables owned by extensions

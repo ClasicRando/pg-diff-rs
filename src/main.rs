@@ -1,3 +1,4 @@
+use std::convert::Into;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -94,6 +95,7 @@ pub struct Table {
     parent_table: Option<SchemaQualifiedName>,
     partition_values: Option<String>,
     tablespace: Option<String>,
+    with: Option<serde_json::Value>,
 }
 
 impl<'r> FromRow<'r, PgRow> for Table {
@@ -105,6 +107,7 @@ impl<'r> FromRow<'r, PgRow> for Table {
         let parent_table: Option<Json<SchemaQualifiedName>> = row.try_get("parent_table")?;
         let partition_values: Option<String> = row.try_get("partition_values")?;
         let tablespace: Option<String> = row.try_get("tablespace")?;
+        let with: Option<serde_json::Value> = row.try_get("with")?;
         Ok(Self {
             name: name.0,
             columns: columns.0,
@@ -113,6 +116,7 @@ impl<'r> FromRow<'r, PgRow> for Table {
             parent_table: parent_table.map(|j| j.0),
             partition_values,
             tablespace,
+            with,
         })
     }
 }
@@ -127,6 +131,8 @@ pub struct Column {
     default_expression: Option<String>,
     generated_column: Option<GeneratedColumn>,
     identity_column: Option<IdentityColumn>,
+    storage: Option<Storage>,
+    compression: Compression
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +151,28 @@ pub struct IdentityColumn {
 pub enum IdentityGeneration {
     Always,
     Default,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum Storage {
+    #[serde(alias = "p")]
+    Plain,
+    #[serde(alias = "e")]
+    External,
+    #[serde(alias = "m")]
+    Main,
+    #[serde(alias = "x")]
+    Extended,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum Compression {
+    #[serde(alias = "")]
+    Default,
+    #[serde(alias = "p")]
+    PGLZ,
+    #[serde(alias = "l")]
+    LZ4,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,16 +440,7 @@ pub struct View {
     name: SchemaQualifiedName,
     columns: Option<Vec<String>>,
     query: String,
-    check_option: ViewCheckOption,
-}
-
-#[derive(Debug, Default, sqlx::Type)]
-#[sqlx(type_name = "varchar")]
-pub enum ViewCheckOption {
-    #[default]
-    NONE,
-    CASCADED,
-    LOCAL,
+    options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Parser)]
