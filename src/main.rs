@@ -5,11 +5,10 @@ use std::str::FromStr;
 
 use clap::Parser;
 use serde::Deserialize;
-use sqlx::{Error as SqlxError, FromRow, PgPool, query_as, query_scalar, Row, Type};
-use sqlx::decode::Decode;
-use sqlx::postgres::{PgConnectOptions, PgRow};
 use sqlx::postgres::types::Oid;
+use sqlx::postgres::{PgConnectOptions, PgRow};
 use sqlx::types::Json;
+use sqlx::{query_as, query_scalar, Error as SqlxError, FromRow, PgPool, Row};
 use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
@@ -132,7 +131,7 @@ pub struct Column {
     generated_column: Option<GeneratedColumn>,
     identity_column: Option<IdentityColumn>,
     storage: Option<Storage>,
-    compression: Compression
+    compression: Compression,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,32 +405,15 @@ pub struct FunctionDependency {
     signature: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct Trigger {
     name: String,
-    timing: TriggerTiming,
-    event: TriggerEvent,
+    #[sqlx(json)]
     owning_table: SchemaQualifiedName,
-    constraint_timing: Option<ConstraintTiming>,
-    old_table: Option<String>,
-    new_table: Option<String>,
-    when_expression: String,
+    #[sqlx(json)]
     function: SchemaQualifiedName,
-}
-
-#[derive(Debug)]
-pub enum TriggerTiming {
-    Before,
-    After,
-    InsteadOf,
-}
-
-#[derive(Debug)]
-pub enum TriggerEvent {
-    Insert,
-    Update(Option<Vec<String>>),
-    Delete,
-    Truncate,
+    function_signature: String,
+    definition: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -465,6 +447,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let sequences = get_sequences(pool, &schemas).await?;
     let functions = get_functions(pool, &schemas).await?;
     let views = get_views(pool, &schemas).await?;
+    let triggers = get_triggers(pool, &schemas).await?;
     Ok(Database {
         schemas,
         udts,
@@ -473,7 +456,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
         indexes,
         sequences,
         functions,
-        triggers: vec![],
+        triggers,
         views,
         extensions: get_extensions(pool).await?,
     })
@@ -584,6 +567,22 @@ async fn get_views(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<View>, PgDif
         }
     };
     Ok(views)
+}
+
+async fn get_triggers(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Trigger>, PgDiffError> {
+    let trigger_queries = include_str!("./../queries/triggers.pgsql");
+    let triggers = match query_as(trigger_queries)
+        .bind(schemas)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load triggers");
+            return Err(error.into());
+        }
+    };
+    Ok(triggers)
 }
 
 async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
