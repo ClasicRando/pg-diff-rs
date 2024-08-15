@@ -4,16 +4,19 @@ use std::str::FromStr;
 
 use clap::Parser;
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
+use sqlx::{Error as SqlxError, FromRow, PgPool, query_as, query_scalar, Row, Type};
+use sqlx::decode::Decode;
 use sqlx::postgres::{PgConnectOptions, PgRow};
+use sqlx::postgres::types::Oid;
 use sqlx::types::Json;
-use sqlx::{query_as, query_scalar, Error as SqlxError, FromRow, PgPool, Row};
 use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
 pub enum PgDiffError {
     #[error(transparent)]
     Sql(#[from] SqlxError),
+    #[error("{0}")]
+    General(String),
 }
 
 #[derive(Debug)]
@@ -403,22 +406,22 @@ pub enum TriggerEvent {
     Truncate,
 }
 
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct View {
+    #[sqlx(json)]
     name: SchemaQualifiedName,
     columns: Option<Vec<String>>,
     query: String,
     check_option: ViewCheckOption,
-    is_updatable: bool,
-    is_insertable: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, sqlx::Type)]
+#[sqlx(type_name = "varchar")]
 pub enum ViewCheckOption {
     #[default]
-    None,
-    Cascaded,
-    Local,
+    NONE,
+    CASCADED,
+    LOCAL,
 }
 
 #[derive(Debug, Parser)]
@@ -442,6 +445,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let indexes = get_indexes(pool, &schemas).await?;
     let sequences = get_sequences(pool, &schemas).await?;
     let functions = get_functions(pool, &schemas).await?;
+    let views = get_views(pool, &schemas).await?;
     Ok(Database {
         schemas,
         udts,
@@ -451,7 +455,7 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
         sequences,
         functions,
         triggers: vec![],
-        views: vec![],
+        views,
         extensions: get_extensions(pool).await?,
     })
 }
@@ -549,6 +553,18 @@ async fn get_functions(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Function
         }
     };
     Ok(functions)
+}
+
+async fn get_views(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<View>, PgDiffError> {
+    let views_query = include_str!("./../queries/views.pgsql");
+    let views = match query_as(views_query).bind(schemas).fetch_all(pool).await {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load views");
+            return Err(error.into());
+        }
+    };
+    Ok(views)
 }
 
 async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
