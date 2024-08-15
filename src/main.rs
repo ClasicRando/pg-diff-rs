@@ -58,14 +58,21 @@ pub struct Extension {
     version: String,
 }
 
-#[derive(Debug)]
-pub enum Udt {
+#[derive(Debug, sqlx::FromRow)]
+pub struct Udt {
+    #[sqlx(json)]
+    name: SchemaQualifiedName,
+    #[sqlx(json)]
+    udt_type: UdtType,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum UdtType {
     Enum {
-        name: SchemaQualifiedName,
         labels: Vec<String>,
     },
     Composite {
-        name: SchemaQualifiedName,
         attributes: Vec<CompositeField>,
     },
     Range {
@@ -73,10 +80,12 @@ pub enum Udt {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct CompositeField {
     name: String,
-    r#type: String,
+    data_type: String,
+    size: i32,
+    collation: Option<String>,
 }
 
 #[derive(Debug)]
@@ -410,13 +419,14 @@ struct Args {
 
 async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let schemas = get_schemas(pool).await?;
+    let udts = get_udts(pool, &schemas).await?;
     let tables = get_tables(pool, &schemas).await?;
     let constraints = get_constraints(pool, &schemas).await?;
     let indexes = get_indexes(pool, &schemas).await?;
     let sequences = get_sequences(pool, &schemas).await?;
     Ok(Database {
         schemas,
-        udts: vec![],
+        udts,
         tables,
         constraints,
         indexes,
@@ -438,6 +448,18 @@ async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
         }
     };
     Ok(schema_names)
+}
+
+async fn get_udts(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Udt>, PgDiffError> {
+    let udts_query = include_str!("./../queries/udts.pgsql");
+    let udts = match query_as(udts_query).bind(schemas).fetch_all(pool).await {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load udts");
+            return Err(error.into())
+        }
+    };
+    Ok(udts)
 }
 
 async fn get_tables(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Table>, PgDiffError> {
