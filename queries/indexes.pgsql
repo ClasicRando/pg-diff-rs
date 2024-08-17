@@ -8,14 +8,7 @@ SELECT
     i.indisvalid AS "is_valid",
     pg_catalog.pg_get_indexdef(ic.oid) AS definition_statement,
     inc."columns" AS "include",
-    (
-        SELECT
-            JSON_OBJECT_AGG(
-                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
-                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
-            )
-        FROM UNNEST(ic.reloptions) iopt(opt)
-    ) AS "with",
+    ic.reloptions AS "with",
     its.spcname AS "tablespace"
 FROM pg_catalog.pg_index AS i
 JOIN pg_catalog.pg_class AS ic

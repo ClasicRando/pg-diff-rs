@@ -99,14 +99,7 @@ SELECT
 				'columns': col."columns",
                 'index_parameters': JSON_OBJECT(
                     'include': inc."columns",
-                    'with': (
-                        SELECT
-                            JSON_OBJECT_AGG(
-                                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
-                                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
-                            )
-                        FROM UNNEST(ic.reloptions) WITH ORDINALITY iopt(opt, ord)
-                    ),
+                    'with': ic.reloptions,
                     'tablespace': its.spcname
                 )
 			)
@@ -123,14 +116,7 @@ SELECT
 				),
                 'index_parameters': JSON_OBJECT(
                     'include': inc."columns",
-                    'with': (
-                        SELECT
-                            JSON_OBJECT_AGG(
-                                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
-                                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
-                            )
-                        FROM UNNEST(ic.reloptions) WITH ORDINALITY iopt(opt, ord)
-                    ),
+                    'with': ic.reloptions,
                     'tablespace': its.spcname
                 )
 			)

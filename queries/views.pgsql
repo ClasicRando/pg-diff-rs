@@ -13,14 +13,7 @@ SELECT
 			AND a.attrelid = vc.oid
 	) AS "columns",
 	v.definition AS "query",
-	(
-		SELECT
-            JSON_OBJECT_AGG(
-                SUBSTRING(opt FROM 1 FOR POSITION('=' IN opt) - 1),
-                SUBSTRING(opt FROM POSITION('=' IN opt) + 1)
-            )
-		FROM UNNEST(vc.reloptions) t(opt)
-	) AS "options"
+	vc.reloptions AS "options"
 FROM pg_catalog.pg_views v
 JOIN pg_catalog.pg_namespace vn
 	ON v.schemaname = vn.nspname
