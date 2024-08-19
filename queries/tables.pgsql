@@ -95,6 +95,14 @@ SELECT
 		SELECT
 			ARRAY_AGG(JSON_OBJECT(
 				'name': pol.polname,
+				'schema_qualified_name': JSON_OBJECT(
+                    'schema_name': tn.nspname,
+                    'local_name': pol.polname
+                ),
+				'owner_table': JSON_OBJECT(
+                    'schema_name': tn.nspname,
+                    'local_name': t.relname
+                ),
 				'is_permissive': pol.polpermissive,
 				'applies_to': (
 					SELECT ARRAY_AGG(rolname)

@@ -3,6 +3,7 @@ SELECT
 		'schema_name': pn.nspname,
 		'local_name': p.proname
 	)) AS "name",
+	p.prokind = 'p' AS is_procedure,
 	pg_catalog.pg_get_function_identity_arguments(p.oid) AS "signature",
 	pg_catalog.pg_get_functiondef(p.oid) AS "definition",
 	pl.lanname AS "language",

@@ -2,6 +2,10 @@ SELECT
     t.tgname AS "name",
 	TO_JSONB(JSON_OBJECT(
 		'schema_name': ton.nspname,
+		'local_name': t.tgname
+	)) AS "schema_qualified_name",
+	TO_JSONB(JSON_OBJECT(
+		'schema_name': ton.nspname,
 		'local_name': tc.relname
 	)) AS "owning_table",
 	TO_JSONB(JSON_OBJECT(
