@@ -1,11 +1,9 @@
 use std::convert::Into;
 use std::fmt::{Display, Formatter, Write};
-use std::io::Write as IoWrite;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Parser;
-use itertools::Itertools;
 use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::postgres::{PgConnectOptions, PgRow};
@@ -136,7 +134,7 @@ pub struct SchemaQualifiedName {
 
 impl Display for SchemaQualifiedName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\".\"{}\"", self.schema_name, self.local_name)
+        write!(f, "{}.{}", self.schema_name, self.local_name)
     }
 }
 
@@ -920,28 +918,28 @@ impl SqlObject for Constraint {
                 are_nulls_distinct,
                 index_parameters,
             } => {
-                // TODO Remove use of join method
-                writeln!(
+                write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE NULLS{} DISTINCT ({}){index_parameters};",
+                    "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE NULLS{} DISTINCT (",
                     self.owning_table,
                     self.name,
                     if *are_nulls_distinct { "" } else { " NOT" },
-                    columns.join(",")
-                )?
+                )?;
+                join_slice(columns, ",", w)?;
+                writeln!(w, "){index_parameters};")?;
             }
             ConstraintType::PrimaryKey {
                 columns,
                 index_parameters,
             } => {
-                // TODO Remove use of join method
-                writeln!(
+                write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} PRIMARY KEY ({}){index_parameters};",
+                    "ALTER TABLE {} ADD CONSTRAINT {} PRIMARY KEY (",
                     self.owning_table,
                     self.name,
-                    columns.join(","),
-                )?
+                )?;
+                join_slice(columns, ",", w)?;
+                writeln!(w, "){index_parameters};")?;
             }
             ConstraintType::ForeignKey {
                 columns,
@@ -951,18 +949,20 @@ impl SqlObject for Constraint {
                 on_delete,
                 on_update,
             } => {
-                // TODO Remove use of join method
-                writeln!(
+                write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {ref_table}({}) {}\n\
-                    \tON DELETE {on_delete}\n\
-                    \tON UPDATE {on_update};",
+                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY (",
                     self.owning_table,
                     self.name,
-                    columns.join(","),
-                    ref_columns.join(","),
+                )?;
+                join_slice(columns, ",", w)?;
+                write!(w, ") REFERENCES {ref_table}(")?;
+                join_slice(ref_columns, ",", w)?;
+                writeln!(
+                    w,
+                    ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update};",
                     match_type.as_ref(),
-                )?
+                )?;
             }
         };
         writeln!(w, " {};", self.timing)?;
@@ -1086,21 +1086,24 @@ pub enum ForeignKeyAction {
 
 impl Display for ForeignKeyAction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // TODO Remove use of join method
         match self {
             ForeignKeyAction::NoAction => write!(f, "NO ACTION"),
             ForeignKeyAction::Restrict => write!(f, "RESTRICT"),
             ForeignKeyAction::Cascade => write!(f, "CASCADE"),
             ForeignKeyAction::SetNull { columns } => {
                 if let Some(columns) = columns {
-                    write!(f, "SET NULL ({})", columns.join(","))
+                    write!(f, "SET NULL (")?;
+                    join_slice(columns, ",", f)?;
+                    write!(f, ")")
                 } else {
                     write!(f, "SET NULL")
                 }
             }
             ForeignKeyAction::SetDefault { columns } => {
                 if let Some(columns) = columns {
-                    write!(f, "SET DEFAULT ({})", columns.join(","))
+                    write!(f, "SET DEFAULT (")?;
+                    join_slice(columns, ",", f)?;
+                    write!(f, ")")
                 } else {
                     write!(f, "SET DEFAULT")
                 }
@@ -1865,7 +1868,7 @@ async fn write_statements_to_file<S: SqlObject>(object: &S) -> Result<(), PgDiff
     object.create_statement(&mut statements)?;
 
     let path = PathBuf::from_str("/home/steventhomson/rust-projects/pg-diff-rs/dump")?
-        .join(object.object_type_name());
+        .join(object.object_type_name().to_lowercase());
     tokio::fs::create_dir_all(&path).await?;
     let mut file = File::create(path.join(format!("{}.pgsql", object.name()))).await?;
     file.write_all(statements.as_bytes()).await?;
