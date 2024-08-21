@@ -1,7 +1,7 @@
 SELECT
     TO_JSONB(JSON_OBJECT(
-        'schema_name': tn.nspname,
-        'local_name': t.typname
+        'schema_name': quote_ident(tn.nspname),
+        'local_name': quote_ident(t.typname)
     )) AS "name",
     TO_JSONB(CASE t.typtype
         WHEN 'c' THEN JSON_OBJECT(

@@ -1,7 +1,7 @@
 SELECT
 	TO_JSONB(JSON_OBJECT(
-		'schema_name': v.schemaname,
-		'local_name': v.viewname
+		'schema_name': quote_ident(v.schemaname),
+		'local_name': quote_ident(v.viewname)
 	)) AS "name",
 	(
 		SELECT

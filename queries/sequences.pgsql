@@ -1,7 +1,7 @@
 SELECT
 	TO_JSONB(JSON_OBJECT(
-		'schema_name': sn.nspname,
-		'local_name': sc.relname
+		'schema_name': quote_ident(sn.nspname),
+		'local_name': quote_ident(sc.relname)
 	)) AS "name",
 	st.typname AS "data_type",
 	s.seqincrement AS increment,
@@ -14,8 +14,8 @@ SELECT
 	    WHEN sa.attnum IS NOT NULL THEN
 	        TO_JSONB(JSON_OBJECT(
 	            'table_name': JSON_OBJECT(
-                    'schema_name': son.nspname,
-                    'local_name': so.relname
+                    'schema_name': quote_ident(son.nspname),
+                    'local_name': quote_ident(so.relname)
 	            ),
 	            'name': sa.attname
 	        ))

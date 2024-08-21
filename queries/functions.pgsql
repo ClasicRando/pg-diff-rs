@@ -1,7 +1,7 @@
 SELECT
 	TO_JSONB(JSON_OBJECT(
-		'schema_name': pn.nspname,
-		'local_name': p.proname
+		'schema_name': quote_ident(pn.nspname),
+		'local_name': quote_ident(p.proname)
 	)) AS "name",
 	p.prokind = 'p' AS is_procedure,
 	pg_catalog.pg_get_function_identity_arguments(p.oid) AS "signature",
@@ -17,8 +17,8 @@ CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
             'name': JSON_OBJECT(
-                'schema_name': pn.nspname,
-                'local_name': p.proname
+                'schema_name': quote_ident(pn.nspname),
+                'local_name': quote_ident(p.proname)
             ),
             'signature': pg_catalog.pg_get_function_identity_arguments(pd.oid)
         )) AS "function_dependencies"

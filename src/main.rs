@@ -1,14 +1,15 @@
 use std::convert::Into;
 use std::fmt::{Display, Formatter, Write};
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Parser;
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
+use sqlx::{FromRow, PgPool, query_as, query_scalar, Row};
 use sqlx::postgres::{PgConnectOptions, PgRow};
+use sqlx::postgres::types::Oid;
 use sqlx::types::Json;
-use sqlx::{query_as, query_scalar, FromRow, PgPool, Row};
 use thiserror::Error as ThisError;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -90,7 +91,7 @@ trait SqlObject: PartialEq {
     fn name(&self) -> &SchemaQualifiedName;
     fn object_type_name(&self) -> &str;
     /// Create the `CREATE` statement for this object
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `ALTER` statement(s) required for this SQL object to be migrated to the new state
     /// provided.
     ///
@@ -99,7 +100,18 @@ trait SqlObject: PartialEq {
     /// migration.  
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `DROP` statement for this object
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
+}
+
+trait TableChildObject: PartialEq {
+    fn create_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError>;
+    fn alter_statements<W: Write>(
+        &self,
+        new: &Self,
+        table: &Table,
+        w: &mut W,
+    ) -> Result<(), PgDiffError>;
+    fn drop_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError>;
 }
 
 #[derive(Debug)]
@@ -113,11 +125,8 @@ pub struct Database {
     schemas: Vec<Schema>,
     udts: Vec<Udt>,
     tables: Vec<Table>,
-    constraints: Vec<Constraint>,
-    indexes: Vec<Index>,
     sequences: Vec<Sequence>,
     functions: Vec<Function>,
-    triggers: Vec<Trigger>,
     views: Vec<View>,
     extensions: Vec<Extension>,
 }
@@ -177,22 +186,22 @@ impl SqlObject for Udt {
         self.udt_type.name()
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         match &self.udt_type {
             UdtType::Enum { labels } => {
                 writeln!(w, "CREAT TYPE {} AS ENUM (", self.name)?;
                 join_slice(labels.as_slice(), "',\n\t'", w)?;
-                writeln!(w, "'\n);")?;
+                writeln!(w, "'\n);\n")?;
             }
             UdtType::Composite { attributes } => {
                 writeln!(w, "CREAT TYPE {} AS (\n\t", self.name)?;
                 join_display_iter(attributes.iter(), ",\n\t", w)?;
-                writeln!(w, "\n);")?;
+                writeln!(w, "\n);\n")?;
             }
             UdtType::Range { subtype } => {
                 writeln!(
                     w,
-                    "CREATE TYPE {} AS RANGE (SUBTYPE = {});",
+                    "CREATE TYPE {} AS RANGE (SUBTYPE = {});\n",
                     self.name, subtype
                 )?;
             }
@@ -235,6 +244,7 @@ impl SqlObject for Udt {
                 {
                     writeln!(w, "ALTER TYPE {} ADD VALUE '{new_label}';", self.name)?;
                 }
+                w.write_char('\n')?;
                 Ok(())
             }
             (
@@ -270,7 +280,7 @@ impl SqlObject for Udt {
                     if let Some(collation) = &attribute.collation {
                         write!(w, " COLLATE {collation}")?;
                     }
-                    writeln!(w, ";")?;
+                    writeln!(w, ";\n")?;
                 }
                 Ok(())
             }
@@ -302,8 +312,8 @@ impl SqlObject for Udt {
         }
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "DROP TYPE {};", self.name)?;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP TYPE {};\n", self.name)?;
         Ok(())
     }
 }
@@ -395,6 +405,9 @@ pub struct Table {
     name: SchemaQualifiedName,
     columns: Vec<Column>,
     policies: Option<Vec<Policy>>,
+    constraints: Option<Vec<Constraint>>,
+    indexes: Option<Vec<Index>>,
+    triggers: Option<Vec<Trigger>>,
     partition_key_def: Option<String>,
     partition_values: Option<String>,
     inherited_tables: Option<Vec<SchemaQualifiedName>>,
@@ -408,6 +421,9 @@ impl<'r> FromRow<'r, PgRow> for Table {
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let columns: Json<Vec<Column>> = row.try_get("columns")?;
         let policies: Option<Json<Vec<Policy>>> = row.try_get("policies")?;
+        let constraints: Option<Json<Vec<Constraint>>> = row.try_get("constraints")?;
+        let indexes: Option<Json<Vec<Index>>> = row.try_get("indexes")?;
+        let triggers: Option<Json<Vec<Trigger>>> = row.try_get("triggers")?;
         let partition_key_def: Option<String> = row.try_get("partition_key_def")?;
         let partition_values: Option<String> = row.try_get("partition_values")?;
         let inherited_tables: Option<Json<Vec<SchemaQualifiedName>>> =
@@ -420,6 +436,9 @@ impl<'r> FromRow<'r, PgRow> for Table {
             name: name.0,
             columns: columns.0,
             policies: policies.map(|j| j.0),
+            constraints: constraints.map(|j| j.0),
+            indexes: indexes.map(|j| j.0),
+            triggers: triggers.map(|j| j.0),
             partition_key_def,
             partition_values,
             inherited_tables: inherited_tables.map(|j| j.0),
@@ -439,7 +458,7 @@ impl SqlObject for Table {
         "TABLE"
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(w, "CREATE TABLE {}", self.name)?;
         if let Some(partitioned_parent_table) = &self.partitioned_parent_table {
             write!(w, "PARTITION OF {partitioned_parent_table}")?;
@@ -481,7 +500,22 @@ impl SqlObject for Table {
         if let Some(tablespace) = &self.tablespace {
             write!(w, "\nTABLESPACE {}", tablespace)?;
         }
-        writeln!(w, ";")?;
+        writeln!(w, ";\n")?;
+        if let Some(constraints) = &self.constraints {
+            for constraint in constraints {
+                constraint.create_statements(self, w)?;
+            }
+        }
+        if let Some(indexes) = &self.indexes {
+            for index in indexes {
+                index.create_statements(self, w)?;
+            }
+        }
+        if let Some(triggers) = &self.triggers {
+            for trigger in triggers {
+                trigger.create_statements(self, w)?;
+            }
+        }
         Ok(())
     }
 
@@ -525,7 +559,11 @@ impl SqlObject for Table {
                 .iter()
                 .filter(|i| new_inherited.map(|o| o.contains(i)).unwrap_or(true))
             {
-                writeln!(w, "ALTER TABLE {} NO INHERIT {remove_inherit};", self.name)?;
+                writeln!(
+                    w,
+                    "ALTER TABLE {} NO INHERIT {remove_inherit};\n",
+                    self.name
+                )?;
             }
         }
         if let Some(new_inherit) = &new.inherited_tables {
@@ -534,7 +572,7 @@ impl SqlObject for Table {
                 .iter()
                 .filter(|i| old_inherited.map(|o| o.contains(i)).unwrap_or(true))
             {
-                writeln!(w, "ALTER TABLE {} INHERIT {add_inherit};", self.name)?;
+                writeln!(w, "ALTER TABLE {} INHERIT {add_inherit};\n", self.name)?;
             }
         }
 
@@ -556,14 +594,20 @@ impl SqlObject for Table {
             new: new.tablespace.as_ref(),
         };
         if compare_tablespace.has_diff() {
-            writeln!(w, "ALTER TABLE {} {compare_tablespace};", self.name)?;
+            writeln!(w, "ALTER TABLE {} {compare_tablespace};\n", self.name)?;
         }
-        compare_option_lists(self, self.with.as_deref(), new.with.as_deref(), w)?;
+        compare_option_lists(
+            self.object_type_name(),
+            &self.name,
+            self.with.as_deref(),
+            new.with.as_deref(),
+            w,
+        )?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "DROP TABLE {}", self.name)?;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP TABLE {};\n", self.name)?;
         Ok(())
     }
 }
@@ -624,11 +668,11 @@ impl Column {
     fn add_column<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "ALTER TABLE {} ADD COLUMN ", table.name)?;
         self.field_definition(false, w)?;
-        writeln!(w, ";")?;
+        writeln!(w, ";\n")?;
         if let Some(storage) = &self.storage {
             writeln!(
                 w,
-                "\nALTER TABLE {} ALTER COLUMN {} SET {};",
+                "\nALTER TABLE {} ALTER COLUMN {} SET {};\n",
                 table.name,
                 self.name,
                 storage.as_ref()
@@ -637,7 +681,7 @@ impl Column {
         if !self.compression.as_ref().is_empty() {
             writeln!(
                 w,
-                "\nALTER TABLE {} ALTER COLUMN {} SET {};",
+                "\nALTER TABLE {} ALTER COLUMN {} SET {};\n",
                 table.name,
                 self.name,
                 self.compression.as_ref()
@@ -647,7 +691,7 @@ impl Column {
     }
 
     fn drop_column<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "ALTER {} DROP COLUMN {};", table.name, self.name)?;
+        writeln!(w, "ALTER {} DROP COLUMN {};\n", table.name, self.name)?;
         Ok(())
     }
 
@@ -666,7 +710,7 @@ impl Column {
         if self.is_non_null != other.is_non_null {
             writeln!(
                 w,
-                "ALTER TABLE {} ALTER COLUMN {} {};",
+                "ALTER TABLE {} ALTER COLUMN {} {};\n",
                 table.name,
                 self.name,
                 if self.is_non_null {
@@ -680,26 +724,26 @@ impl Column {
             (Some(old_expression), Some(new_expression)) if old_expression != new_expression => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
+                    "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;\n",
                     table.name, self.name
                 )?;
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};",
+                    "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};\n",
                     table.name, self.name
                 )?;
             }
             (Some(_), None) => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
+                    "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;\n",
                     table.name, self.name
                 )?;
             }
             (None, Some(new_expression)) => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};",
+                    "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};\n",
                     table.name, self.name
                 )?;
             }
@@ -715,7 +759,7 @@ impl Column {
             (Some(_), None) => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} DROP EXPRESSION;",
+                    "ALTER TABLE {} ALTER COLUMN {} DROP EXPRESSION;\n",
                     table.name,
                     self.name
                 )?;
@@ -733,7 +777,7 @@ impl Column {
                 if old_identity.identity_generation != new_identity.identity_generation {
                     writeln!(
                         w,
-                        "ALTER TABLE {} ALTER COLUMN {} SET GENERATED {};",
+                        "ALTER TABLE {} ALTER COLUMN {} SET GENERATED {};\n",
                         table.name,
                         self.name,
                         new_identity.identity_generation.as_ref()
@@ -742,20 +786,20 @@ impl Column {
                 if old_identity.sequence_options != new_identity.sequence_options {
                     write!(w, "ALTER TABLE {} ALTER COLUMN {} ", table.name, self.name)?;
                     new_identity.sequence_options.alter_sequence(w)?;
-                    writeln!(w, ";")?;
+                    writeln!(w, ";\n")?;
                 }
             }
             (Some(_), None) => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} DROP IDENTITY;",
+                    "ALTER TABLE {} ALTER COLUMN {} DROP IDENTITY;\n",
                     table.name, self.name
                 )?;
             }
             (None, Some(new_identity)) => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} ADD {new_identity};",
+                    "ALTER TABLE {} ALTER COLUMN {} ADD {new_identity};\n",
                     table.name, self.name
                 )?;
             }
@@ -765,7 +809,7 @@ impl Column {
             (Some(old_storage), Some(new_storage)) if old_storage != new_storage => {
                 writeln!(
                     w,
-                    "ALTER TABLE {} ALTER COLUMN {} SET {};",
+                    "ALTER TABLE {} ALTER COLUMN {} SET {};\n",
                     table.name,
                     self.name,
                     new_storage.as_ref()
@@ -776,7 +820,7 @@ impl Column {
         if self.compression != other.compression {
             writeln!(
                 w,
-                "ALTER TABLE {} ALTER COLUMN {} SET {};",
+                "ALTER TABLE {} ALTER COLUMN {} SET {};\n",
                 table.name,
                 self.name,
                 other.compression.as_ref()
@@ -866,41 +910,12 @@ pub enum Compression {
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Constraint {
     name: String,
-    schema_qualified_name: SchemaQualifiedName,
-    owning_table: SchemaQualifiedName,
     constraint_type: ConstraintType,
     timing: ConstraintTiming,
 }
 
-impl<'r> FromRow<'r, PgRow> for Constraint {
-    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let name: String = row.try_get("name")?;
-        let owning_table: Json<SchemaQualifiedName> = row.try_get("owning_table")?;
-        let constraint_type: Json<ConstraintType> = row.try_get("constraint_type")?;
-        let timing: Json<ConstraintTiming> = row.try_get("timing")?;
-        Ok(Self {
-            name: name.clone(),
-            schema_qualified_name: SchemaQualifiedName {
-                schema_name: owning_table.0.schema_name.clone(),
-                local_name: name,
-            },
-            owning_table: owning_table.0,
-            constraint_type: constraint_type.0,
-            timing: timing.0,
-        })
-    }
-}
-
-impl SqlObject for Constraint {
-    fn name(&self) -> &SchemaQualifiedName {
-        &self.schema_qualified_name
-    }
-
-    fn object_type_name(&self) -> &str {
-        "CONSTRAINT"
-    }
-
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+impl Constraint {
+    fn create_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
         match &self.constraint_type {
             ConstraintType::Check {
                 expression,
@@ -908,9 +923,10 @@ impl SqlObject for Constraint {
                 ..
             } => write!(
                 w,
-                "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({expression}){}",
-                self.owning_table,
+                "ALTER TABLE {} ADD CONSTRAINT {}\n{}{}",
+                table.name,
                 self.name,
+                expression.trim(),
                 if *is_inheritable { "" } else { " NO INHERIT" }
             )?,
             ConstraintType::Unique {
@@ -920,13 +936,13 @@ impl SqlObject for Constraint {
             } => {
                 write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} UNIQUE NULLS{} DISTINCT (",
-                    self.owning_table,
+                    "ALTER TABLE {} ADD CONSTRAINT {}\nUNIQUE NULLS{} DISTINCT (",
+                    table.name,
                     self.name,
                     if *are_nulls_distinct { "" } else { " NOT" },
                 )?;
                 join_slice(columns, ",", w)?;
-                writeln!(w, "){index_parameters};")?;
+                write!(w, "){index_parameters}")?;
             }
             ConstraintType::PrimaryKey {
                 columns,
@@ -934,12 +950,11 @@ impl SqlObject for Constraint {
             } => {
                 write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} PRIMARY KEY (",
-                    self.owning_table,
-                    self.name,
+                    "ALTER TABLE {} ADD CONSTRAINT {}\nPRIMARY KEY (",
+                    table.name, self.name,
                 )?;
                 join_slice(columns, ",", w)?;
-                writeln!(w, "){index_parameters};")?;
+                write!(w, "){index_parameters}")?;
             }
             ConstraintType::ForeignKey {
                 columns,
@@ -951,25 +966,29 @@ impl SqlObject for Constraint {
             } => {
                 write!(
                     w,
-                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY (",
-                    self.owning_table,
-                    self.name,
+                    "ALTER TABLE {} ADD CONSTRAINT {}\nFOREIGN KEY (",
+                    table.name, self.name,
                 )?;
                 join_slice(columns, ",", w)?;
                 write!(w, ") REFERENCES {ref_table}(")?;
                 join_slice(ref_columns, ",", w)?;
-                writeln!(
+                write!(
                     w,
-                    ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update};",
+                    ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update}",
                     match_type.as_ref(),
                 )?;
             }
         };
-        writeln!(w, " {};", self.timing)?;
+        writeln!(w, " {};\n", self.timing)?;
         Ok(())
     }
 
-    fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
+    fn alter_statements<W: Write>(
+        &self,
+        new: &Self,
+        table: &Table,
+        w: &mut W,
+    ) -> Result<(), PgDiffError> {
         if self.constraint_type == new.constraint_type && self.timing == new.timing {
             return Ok(());
         }
@@ -977,29 +996,29 @@ impl SqlObject for Constraint {
         if self.constraint_type != new.constraint_type {
             writeln!(
                 w,
-                "ALTER TABLE {} DROP CONSTRAINT {};",
-                self.owning_table, self.name
+                "ALTER TABLE {} DROP CONSTRAINT {};\n",
+                table.name, self.name
             )?;
-            self.create_statement(w)?;
+            self.create_statements(table, w)?;
             return Ok(());
         }
 
         if self.timing != new.timing {
             writeln!(
                 w,
-                "ALTER TABLE {} ALTER CONSTRAINT {} {};",
-                self.owning_table, self.name, new.timing
+                "ALTER TABLE {} ALTER CONSTRAINT {} {};\n",
+                table.name, self.name, new.timing
             )?;
         }
 
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn drop_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(
             w,
-            "ALTER TABLE {} DROP CONSTRAINT {};",
-            self.owning_table, self.name
+            "ALTER TABLE {} DROP CONSTRAINT {};\n",
+            table.name, self.name
         )?;
         Ok(())
     }
@@ -1112,14 +1131,13 @@ impl Display for ForeignKeyAction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct Index {
-    name: String,
     schema_qualified_name: SchemaQualifiedName,
-    owning_table: SchemaQualifiedName,
     columns: Vec<String>,
     is_valid: bool,
     definition_statement: String,
+    #[serde(flatten)]
     parameters: IndexParameters,
 }
 
@@ -1129,53 +1147,25 @@ impl PartialEq for Index {
     }
 }
 
-impl<'r> FromRow<'r, PgRow> for Index {
-    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let name: String = row.try_get("name")?;
-        let owning_table: Json<SchemaQualifiedName> = row.try_get("owning_table")?;
-        let columns: Vec<String> = row.try_get("columns")?;
-        let is_valid: bool = row.try_get("is_valid")?;
-        let definition_statement: String = row.try_get("definition_statement")?;
-        Ok(Self {
-            name: name.clone(),
-            schema_qualified_name: SchemaQualifiedName {
-                local_name: name,
-                schema_name: owning_table.0.schema_name.clone(),
-            },
-            owning_table: owning_table.0,
-            columns,
-            is_valid,
-            definition_statement,
-            parameters: IndexParameters {
-                include: row.try_get("include")?,
-                with: row.try_get("with")?,
-                tablespace: row.try_get("tablespace")?,
-            },
-        })
-    }
-}
-
-impl SqlObject for Index {
-    fn name(&self) -> &SchemaQualifiedName {
-        &self.schema_qualified_name
-    }
-
-    fn object_type_name(&self) -> &str {
-        "INDEX"
-    }
-
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "{};", self.definition_statement)?;
+impl TableChildObject for Index {
+    fn create_statements<W: Write>(&self, _: &Table, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "{};\n", self.definition_statement)?;
         Ok(())
     }
 
-    fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
+    fn alter_statements<W: Write>(
+        &self,
+        new: &Self,
+        table: &Table,
+        w: &mut W,
+    ) -> Result<(), PgDiffError> {
         if self.columns == new.columns
             && self.parameters.include == new.parameters.include
             && self.parameters.with != new.parameters.with
         {
             compare_option_lists(
-                self,
+                "INDEX",
+                &self.schema_qualified_name,
                 self.parameters.with.as_deref(),
                 new.parameters.with.as_deref(),
                 w,
@@ -1187,20 +1177,20 @@ impl SqlObject for Index {
             if compare_tablespace.has_diff() {
                 writeln!(
                     w,
-                    "ALTER INDEX {} {compare_tablespace};",
+                    "ALTER INDEX {} {compare_tablespace};\n",
                     self.schema_qualified_name,
                 )?;
             }
             return Ok(());
         }
 
-        self.drop_statement(w)?;
-        self.create_statement(w)?;
+        self.drop_statements(table, w)?;
+        self.create_statements(table, w)?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "DROP INDEX {};", self.schema_qualified_name)?;
+    fn drop_statements<W: Write>(&self, _: &Table, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP INDEX {};\n", self.schema_qualified_name)?;
         Ok(())
     }
 }
@@ -1215,37 +1205,27 @@ impl Display for StorageParameter {
     }
 }
 
-fn compare_option_lists<S, O, W>(
-    sql_object: &S,
+fn compare_option_lists<O, W>(
+    object_type_name: &str,
+    object_name: &SchemaQualifiedName,
     old: Option<&[O]>,
     new: Option<&[O]>,
     w: &mut W,
 ) -> Result<(), PgDiffError>
 where
-    S: SqlObject,
     O: Display + PartialEq,
     W: Write,
 {
     if let Some(new_options) = new {
         let old_options = old.unwrap_or_default();
         let set_options = new_options.iter().filter(|p| old_options.contains(*p));
-        write!(
-            w,
-            "ALTER {} {} SET (",
-            sql_object.object_type_name(),
-            sql_object.name()
-        )?;
+        write!(w, "ALTER {} {} SET (", object_type_name, object_name)?;
         join_display_iter(set_options, ",", w)?;
-        writeln!(w, ");")?;
+        writeln!(w, ");\n")?;
     }
     if let Some(old_options) = old {
         let new_options = new.unwrap_or_default();
-        write!(
-            w,
-            "ALTER {} {} RESET (",
-            sql_object.object_type_name(),
-            sql_object.name()
-        )?;
+        write!(w, "ALTER {} {} RESET (", object_type_name, object_name)?;
         for p in old_options.iter().filter(|p| new_options.contains(*p)) {
             let option = p.to_string();
             if let Some((first, _)) = option.split_once('=') {
@@ -1254,7 +1234,7 @@ where
                 write!(w, "{option}")?;
             }
         }
-        writeln!(w, ");")?;
+        writeln!(w, ");\n")?;
     }
     Ok(())
 }
@@ -1321,7 +1301,7 @@ impl SqlObject for Policy {
         "POLICY"
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(
             w,
             "CREATE POLICY {} ON {} AS {} FOR {} TO {}",
@@ -1341,14 +1321,14 @@ impl SqlObject for Policy {
         if let Some(check_expression) = &self.check_expression {
             write!(w, " WITH CHECK ({check_expression})")?;
         }
-        write!(w, ";")?;
+        writeln!(w, ";\n")?;
         Ok(())
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
         if self.is_permissive != new.is_permissive || self.command != new.command {
-            self.drop_statement(w)?;
-            self.create_statement(w)?;
+            self.drop_statements(w)?;
+            self.create_statements(w)?;
             return Ok(());
         }
         write!(
@@ -1364,12 +1344,12 @@ impl SqlObject for Policy {
         if let Some(check_expression) = &new.check_expression {
             write!(w, " WITH CHECK ({check_expression})")?;
         }
-        write!(w, ";")?;
+        writeln!(w, ";\n")?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "DROP POLICY {} ON {};", self.name, self.owner_table)?;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP POLICY {} ON {};\n", self.name, self.owner_table)?;
         Ok(())
     }
 }
@@ -1425,16 +1405,16 @@ impl SqlObject for Sequence {
         "SEQUENCE"
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(
             w,
             "CREATE SEQUENCE {} AS {} {}",
             self.name, self.data_type, self.sequence_options,
         )?;
         if let Some(owner) = &self.owner {
-            write!(w, " {owner}")?;
+            writeln!(w, " {owner};\n")?;
         } else {
-            write!(w, " OWNED BY NONE")?;
+            writeln!(w, " OWNED BY NONE;\n")?;
         }
         Ok(())
     }
@@ -1482,12 +1462,12 @@ impl SqlObject for Sequence {
             }
             _ => {}
         }
-        write!(w, ";'")?;
+        writeln!(w, ";\n")?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "DROP SEQUENCE {}", self.name)?;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP SEQUENCE {};\n", self.name)?;
         Ok(())
     }
 }
@@ -1588,21 +1568,21 @@ impl SqlObject for Function {
         }
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "{};", self.definition)?;
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "{};\n", self.definition)?;
         Ok(())
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
         if self.signature != new.signature {
-            self.drop_statement(w)?;
+            self.drop_statements(w)?;
         }
-        self.create_statement(w)?;
+        self.create_statements(w)?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "DROP {} {};", self.object_type_name(), self.name)?;
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP {} {};\n", self.object_type_name(), self.name)?;
         Ok(())
     }
 }
@@ -1613,41 +1593,124 @@ pub struct FunctionDependency {
     signature: String,
 }
 
-#[derive(Debug, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct Trigger {
     name: String,
-    #[sqlx(json)]
-    schema_qualified_name: SchemaQualifiedName,
-    #[sqlx(json)]
-    owning_table: SchemaQualifiedName,
-    #[sqlx(json)]
-    function: SchemaQualifiedName,
-    function_signature: String,
-    definition: String,
+    timing: TriggerTiming,
+    events: Vec<TriggerEvent>,
+    old_name: Option<String>,
+    new_name: Option<String>,
+    is_row_level: bool,
+    when_expression: Option<String>,
+    function_name: SchemaQualifiedName,
+    function_args: Option<Vec<u8>>,
 }
 
-impl SqlObject for Trigger {
-    fn name(&self) -> &SchemaQualifiedName {
-        &self.schema_qualified_name
-    }
-
-    fn object_type_name(&self) -> &str {
-        "TRIGGER"
-    }
-
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "{};", self.definition.as_str())?;
+impl TableChildObject for Trigger {
+    fn create_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
+        write!(w, "CREATE TRIGGER {} {} ", self.name, self.timing.as_ref())?;
+        join_display_iter(self.events.iter(), " ", w)?;
+        write!(w, "\nON {}", table.name)?;
+        if self.old_name.is_some() || self.old_name.is_some() {
+            write!(w, "\nREFERENCING")?;
+        }
+        if let Some(old_table) = &self.old_name {
+            write!(w, " OLD TABLE AS {old_table}")?;
+        }
+        if let Some(new_table) = &self.new_name {
+            write!(w, " NEW TABLE AS {new_table}")?;
+        }
+        write!(
+            w,
+            "\nFOR EACH {}",
+            if self.is_row_level {
+                "ROW"
+            } else {
+                "STATEMENT"
+            }
+        )?;
+        if let Some(when_expression) = &self.when_expression {
+            write!(w, "\nWHEN {when_expression}")?;
+        }
+        write!(w, "\nEXECUTE FUNCTION {}(", self.function_name)?;
+        match &self.function_args {
+            Some(args) if !args.is_empty() => {
+                w.write_char('\'')?;
+                let iter = args
+                    .split(|byte| *byte == 0)
+                    .filter_map(|chunk| {
+                        let str = String::from_utf8_lossy(chunk);
+                        if str.is_empty() {
+                            return None;
+                        }
+                        Some(str)
+                    });
+                join_display_iter(iter, "','", w)?;
+                w.write_char('\'')?;
+            }
+            _ => {}
+        }
+        writeln!(w, ");\n")?;
         Ok(())
     }
 
-    fn alter_statements<W: Write>(&self, _: &Self, w: &mut W) -> Result<(), PgDiffError> {
-        self.drop_statement(w)?;
-        self.create_statement(w)
+    fn alter_statements<W: Write>(
+        &self,
+        _: &Self,
+        table: &Table,
+        w: &mut W,
+    ) -> Result<(), PgDiffError> {
+        self.drop_statements(table, w)?;
+        self.create_statements(table, w)
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        writeln!(w, "DROP TRIGGER {} ON {};", self.name, self.owning_table)?;
+    fn drop_statements<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
+        writeln!(w, "DROP TRIGGER {} ON {};", self.name, table.name)?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, strum::AsRefStr)]
+pub enum TriggerTiming {
+    #[serde(rename = "before")]
+    #[strum(serialize = "BEFORE")]
+    Before,
+    #[serde(rename = "after")]
+    #[strum(serialize = "AFTER")]
+    After,
+    #[serde(rename = "instead-of")]
+    #[strum(serialize = "INSTEAD OF")]
+    InsteadOf,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum TriggerEvent {
+    #[serde(rename = "insert")]
+    Insert,
+    #[serde(rename = "update")]
+    Update { columns: Option<Vec<String>> },
+    #[serde(rename = "delete")]
+    Delete,
+    #[serde(rename = "truncate")]
+    Truncate,
+}
+
+impl Display for TriggerEvent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TriggerEvent::Insert => write!(f, "INSERT"),
+            TriggerEvent::Update { columns } => {
+                write!(f, "UPDATE")?;
+                if let Some(columns) = columns {
+                    write!(f, " OF ")?;
+                    join_slice(columns.as_slice(), ",", f)?;
+                }
+                Ok(())
+            }
+            TriggerEvent::Delete => write!(f, "DELETE"),
+            TriggerEvent::Truncate => write!(f, "TRUNCATE"),
+        }
     }
 }
 
@@ -1669,7 +1732,7 @@ impl SqlObject for View {
         "VIEW"
     }
 
-    fn create_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE OR REPLACE VIEW {}", self.name)?;
         if let Some(columns) = &self.columns {
             write!(w, "('")?;
@@ -1687,18 +1750,24 @@ impl SqlObject for View {
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
         if self.columns != new.columns {
-            self.drop_statement(w)?;
-            self.create_statement(w)?;
+            self.drop_statements(w)?;
+            self.create_statements(w)?;
             return Ok(());
         }
         if self.query != new.query {
-            self.create_statement(w)?;
+            self.create_statements(w)?;
         }
-        compare_option_lists(self, self.options.as_deref(), new.options.as_deref(), w)?;
+        compare_option_lists(
+            self.object_type_name(),
+            self.name(),
+            self.options.as_deref(),
+            new.options.as_deref(),
+            w,
+        )?;
         Ok(())
     }
 
-    fn drop_statement<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(w, "DROP VIEW {};", self.name)?;
         Ok(())
     }
@@ -1708,21 +1777,15 @@ async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let schemas = get_schemas(pool).await?;
     let udts = get_udts(pool, &schemas).await?;
     let tables = get_tables(pool, &schemas).await?;
-    let constraints = get_constraints(pool, &schemas).await?;
-    let indexes = get_indexes(pool, &schemas).await?;
     let sequences = get_sequences(pool, &schemas).await?;
     let functions = get_functions(pool, &schemas).await?;
     let views = get_views(pool, &schemas).await?;
-    let triggers = get_triggers(pool, &schemas).await?;
     Ok(Database {
         schemas,
         udts,
         tables,
-        constraints,
-        indexes,
         sequences,
         functions,
-        triggers,
         views,
         extensions: get_extensions(pool).await?,
     })
@@ -1762,37 +1825,6 @@ async fn get_tables(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Table>, PgD
         }
     };
     Ok(tables)
-}
-
-async fn get_constraints(
-    pool: &PgPool,
-    schemas: &[Schema],
-) -> Result<Vec<Constraint>, PgDiffError> {
-    let constraints_query = include_str!("./../queries/constraints.pgsql");
-    let constraints = match query_as(constraints_query)
-        .bind(schemas)
-        .fetch_all(pool)
-        .await
-    {
-        Ok(inner) => inner,
-        Err(error) => {
-            println!("Could not load constraints");
-            return Err(error.into());
-        }
-    };
-    Ok(constraints)
-}
-
-async fn get_indexes(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Index>, PgDiffError> {
-    let index_query = include_str!("./../queries/indexes.pgsql");
-    let indexes = match query_as(index_query).bind(schemas).fetch_all(pool).await {
-        Ok(inner) => inner,
-        Err(error) => {
-            println!("Could not load indexes");
-            return Err(error.into());
-        }
-    };
-    Ok(indexes)
 }
 
 async fn get_sequences(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Sequence>, PgDiffError> {
@@ -1835,22 +1867,6 @@ async fn get_views(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<View>, PgDif
     Ok(views)
 }
 
-async fn get_triggers(pool: &PgPool, schemas: &[Schema]) -> Result<Vec<Trigger>, PgDiffError> {
-    let trigger_queries = include_str!("./../queries/triggers.pgsql");
-    let triggers = match query_as(trigger_queries)
-        .bind(schemas)
-        .fetch_all(pool)
-        .await
-    {
-        Ok(inner) => inner,
-        Err(error) => {
-            println!("Could not load triggers");
-            return Err(error.into());
-        }
-    };
-    Ok(triggers)
-}
-
 async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
     let extensions_query = include_str!("./../queries/extensions.pgsql");
     let extensions = match query_as(extensions_query).fetch_all(pool).await {
@@ -1865,7 +1881,7 @@ async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
 
 async fn write_statements_to_file<S: SqlObject>(object: &S) -> Result<(), PgDiffError> {
     let mut statements = String::new();
-    object.create_statement(&mut statements)?;
+    object.create_statements(&mut statements)?;
 
     let path = PathBuf::from_str("/home/steventhomson/rust-projects/pg-diff-rs/dump")?
         .join(object.object_type_name().to_lowercase());
