@@ -10,7 +10,7 @@ SELECT
                 SELECT
                     ARRAY_AGG(JSON_OBJECT(
                         'name': a.attname,
-                        'data_type': at.typname,
+                        'data_type': pg_catalog.format_type(a.atttypid, a.atttypmod),
                         'size': a.attlen,
                         'collation': '"'||cn.nspname||'"."'||cl.collname||'"'
                     ) ORDER BY a.attnum) AS "columns"

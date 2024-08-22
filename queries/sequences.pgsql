@@ -3,7 +3,7 @@ SELECT
 		'schema_name': quote_ident(sn.nspname),
 		'local_name': quote_ident(sc.relname)
 	)) AS "name",
-	st.typname AS "data_type",
+	pg_catalog.format_type(seqtypid, null) AS "data_type",
 	s.seqincrement AS increment,
 	s.seqmin AS min_value,
 	s.seqmax AS max_value,
