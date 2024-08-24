@@ -5,7 +5,7 @@ use sqlx::{query_as, FromRow, PgPool, Row};
 
 use crate::PgDiffError;
 
-use super::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
     let schemas_query = include_str!("./../../queries/schemas.pgsql");

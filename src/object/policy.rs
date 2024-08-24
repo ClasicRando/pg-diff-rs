@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::PgDiffError;
 
-use super::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Policy {

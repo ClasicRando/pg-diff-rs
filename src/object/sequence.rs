@@ -7,7 +7,7 @@ use sqlx::{query_as, FromRow, PgPool, Row};
 
 use crate::PgDiffError;
 
-use super::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequence>, PgDiffError> {
     let sequence_query = include_str!("./../../queries/sequences.pgsql");

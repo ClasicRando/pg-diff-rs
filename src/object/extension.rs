@@ -3,7 +3,7 @@ use std::fmt::Write;
 use sqlx::postgres::PgRow;
 use sqlx::{Error, FromRow, PgPool, query_as, Row};
 
-use crate::object::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 use crate::PgDiffError;
 
 pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {

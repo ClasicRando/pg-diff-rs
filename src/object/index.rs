@@ -1,10 +1,13 @@
-use crate::object::util::{
-    compare_option_lists, IndexParameters, SchemaQualifiedName, SqlObject, TablespaceCompare,
-};
-use crate::PgDiffError;
+use std::fmt::Write;
+
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
-use std::fmt::Write;
+
+use crate::PgDiffError;
+
+use super::{
+    compare_option_lists, IndexParameters, SchemaQualifiedName, SqlObject, TablespaceCompare,
+};
 
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
     let indexes_query = include_str!("./../../queries/indexes.pgsql");

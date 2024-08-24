@@ -6,7 +6,7 @@ use sqlx::postgres::types::Oid;
 
 use crate::{join_display_iter, join_slice, PgDiffError};
 
-use super::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_triggers(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Trigger>, PgDiffError> {
     let triggers_query = include_str!("./../../queries/triggers.pgsql");

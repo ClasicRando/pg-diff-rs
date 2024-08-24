@@ -5,7 +5,7 @@ use sqlx::{query_as, PgPool};
 
 use crate::{join_display_iter, join_slice, PgDiffError};
 
-use super::util::{Collation, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDiffError> {
     let udts_query = include_str!("./../../queries/udts.pgsql");

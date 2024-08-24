@@ -5,7 +5,7 @@ use sqlx::postgres::PgRow;
 use sqlx::types::Json;
 use sqlx::{FromRow, PgPool, query_as, Row};
 
-use crate::object::util::{SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 use crate::PgDiffError;
 
 pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Function>, PgDiffError> {

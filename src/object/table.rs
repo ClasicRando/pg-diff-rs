@@ -10,7 +10,7 @@ use crate::{join_display_iter, map_join_slice, PgDiffError};
 
 use super::policy::Policy;
 use super::sequence::SequenceOptions;
-use super::util::{
+use super::{
     compare_option_lists, Collation, SchemaQualifiedName, SqlObject, StorageParameter, TableSpace,
     TablespaceCompare,
 };

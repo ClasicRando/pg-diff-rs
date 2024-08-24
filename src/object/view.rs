@@ -3,7 +3,7 @@ use sqlx::{PgPool, query_as};
 
 use crate::{join_slice, PgDiffError};
 
-use super::util::{compare_option_lists, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
     let views_query = include_str!("./../../queries/views.pgsql");

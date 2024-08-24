@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
-use crate::object::util::{IndexParameters, SchemaQualifiedName, SqlObject};
+use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject};
 use crate::{join_slice, PgDiffError};
 
 pub async fn get_constraints(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Constraint>, PgDiffError> {
