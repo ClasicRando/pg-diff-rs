@@ -1,5 +1,6 @@
 WITH table_indexes AS (
     SELECT
+        i.indexrelid AS "oid",
         t.oid table_oid,
         JSON_OBJECT(
             'schema_name': quote_ident(tn.nspname),
@@ -48,6 +49,7 @@ WITH table_indexes AS (
         AND NOT i.indisexclusion
 )
 SELECT
+    ti.oid,
     ti.table_oid,
     ti.owner_table_name,
     ti.name AS schema_qualified_name,
@@ -56,7 +58,11 @@ SELECT
     ti.definition_statement,
     ti.include,
     ti.with,
-    ti.tablespace
+    ti.tablespace,
+    TO_JSONB(JSON_OBJECT(
+        'oid': CAST(ti.table_oid AS integer),
+        'catalog': 'pg_class'
+    )) AS "dependencies"
 FROM table_indexes ti
 WHERE
     ti.table_oid = ANY($1)

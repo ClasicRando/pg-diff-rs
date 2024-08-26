@@ -4,10 +4,13 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
-use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject};
+use crate::object::{PgCatalog, Dependency, IndexParameters, SchemaQualifiedName, SqlObject};
 use crate::{join_slice, PgDiffError};
 
-pub async fn get_constraints(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Constraint>, PgDiffError> {
+pub async fn get_constraints(
+    pool: &PgPool,
+    tables: &[Oid],
+) -> Result<Vec<Constraint>, PgDiffError> {
     let constraints_query = include_str!("./../../queries/constraints.pgsql");
     let constraints = match query_as(constraints_query)
         .bind(tables)
@@ -25,6 +28,7 @@ pub async fn get_constraints(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Constr
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::FromRow)]
 pub struct Constraint {
+    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
@@ -35,6 +39,8 @@ pub struct Constraint {
     pub(crate) constraint_type: ConstraintType,
     #[sqlx(json)]
     pub(crate) timing: ConstraintTiming,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>
 }
 
 impl SqlObject for Constraint {
@@ -44,6 +50,17 @@ impl SqlObject for Constraint {
 
     fn object_type_name(&self) -> &str {
         "CONSTRAINT"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Constraint,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {

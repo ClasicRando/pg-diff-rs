@@ -1,9 +1,10 @@
 SELECT
+    n.oid,
     n.nspname AS "name",
-    au.rolname AS "owner"
+    r.rolname AS "owner"
 FROM pg_catalog.pg_namespace n
-JOIN pg_catalog.pg_authid au
-    ON n.nspowner = au.oid
+JOIN pg_catalog.pg_roles r
+    ON n.nspowner = r.oid
 WHERE
     n.nspname NOT IN ('pg_catalog', 'information_schema')
     AND n.nspname !~ '^pg_toast'

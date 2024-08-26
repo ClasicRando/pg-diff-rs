@@ -4,6 +4,7 @@ WITH simple_table_columns AS (
     WHERE NOT a.attisdropped
 ), table_constraints AS (
     SELECT
+		co.oid oid,
         t.oid table_oid,
         co.conname AS "name",
         JSON_OBJECT(
@@ -137,20 +138,20 @@ WITH simple_table_columns AS (
     FROM pg_catalog.pg_constraint co
     JOIN pg_catalog.pg_class t ON t.oid = co.conrelid
     JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace
-    LEFT JOIN LATERAL (
+    CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY a.attnum) as "columns"
         FROM simple_table_columns a
         WHERE
             a.attrelid = co.conrelid
             AND a.attnum = ANY(co.conkey)
-    ) AS col ON true
+    ) AS col
     LEFT JOIN pg_catalog.pg_index i
         ON co.conindid = i.indexrelid
     LEFT JOIN pg_catalog.pg_class AS ic
         ON i.indexrelid = ic.oid
     LEFT JOIN pg_catalog.pg_tablespace its
         ON ic.reltablespace = its.oid
-    LEFT JOIN LATERAL (
+    CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY ikey.ord) AS "columns"
         FROM UNNEST(i.indkey) WITH ORDINALITY AS ikey(attnum, ord)
         JOIN pg_catalog.pg_attribute a
@@ -158,18 +159,39 @@ WITH simple_table_columns AS (
             AND a.attnum = ikey.attnum
         WHERE
             ikey.ord > indnkeyatts
-    ) AS inc ON true
+    ) AS inc
     WHERE
         co.contype IN ('c','f','p','u')
 )
 SELECT
+	tc.oid,
     tc.table_oid,
     tc.owner_table_name,
     tc.name,
     tc.schema_qualified_name,
     tc.constraint_type,
-    tc.timing
+    tc.timing,
+	TO_JSONB(td.dependencies) AS "dependencies"
 FROM table_constraints tc
+CROSS JOIN LATERAL (
+	SELECT
+	    ARRAY_AGG(JSON_OBJECT(
+            'catalog': 'pg_class',
+            'oid': CAST(td.oid AS integer)
+        )) AS "dependencies"
+	FROM (
+		SELECT DISTINCT td.oid
+		FROM pg_catalog.pg_depend d
+		JOIN pg_catalog.pg_class td
+			ON d.refclassid = 'pg_class'::REGCLASS
+			AND d.refobjid = td.oid
+		WHERE
+			d.classid = 'pg_constraint'::REGCLASS
+			AND d.objid = tc.oid
+			AND d.deptype IN ('n','a')
+			AND td.relkind IN ('r','p')
+	) td
+) td
 WHERE
     tc.table_oid = ANY($1)
     -- Exclude tables owned by extensions

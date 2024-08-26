@@ -1,10 +1,11 @@
 use std::fmt::Write;
 
-use sqlx::postgres::PgRow;
-use sqlx::{Error, FromRow, PgPool, query_as, Row};
+use sqlx::postgres::types::Oid;
+use sqlx::{query_as, PgPool};
 
-use super::{SchemaQualifiedName, SqlObject};
 use crate::PgDiffError;
+
+use super::{PgCatalog, Dependency, SchemaQualifiedName, SqlObject};
 
 pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
     let extensions_query = include_str!("./../../queries/extensions.pgsql");
@@ -18,31 +19,39 @@ pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError
     Ok(extensions)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Extension {
+    pub(crate) oid: Oid,
+    #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     pub(crate) version: String,
     pub(crate) schema_name: String,
     pub(crate) is_relocatable: bool,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
-impl<'r> FromRow<'r, PgRow> for Extension {
-    fn from_row(row: &'r PgRow) -> Result<Self, Error> {
-        let name: String = row.try_get("name")?;
-        let version: String = row.try_get("version")?;
-        let schema_name: String = row.try_get("schema_name")?;
-        let is_relocatable: bool = row.try_get("is_relocatable")?;
-        Ok(Self {
-            name: SchemaQualifiedName {
-                local_name: name,
-                schema_name: "".to_string(),
-            },
-            version,
-            schema_name,
-            is_relocatable,
-        })
-    }
-}
+// impl<'r> FromRow<'r, PgRow> for Extension {
+//     fn from_row(row: &'r PgRow) -> Result<Self, Error> {
+//         let oid: Oid = row.try_get("oid")?;
+//         let name: String = row.try_get("name")?;
+//         let version: String = row.try_get("version")?;
+//         let schema_name: String = row.try_get("schema_name")?;
+//         let is_relocatable: bool = row.try_get("is_relocatable")?;
+//         let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
+//         Ok(Self {
+//             oid,
+//             name: SchemaQualifiedName {
+//                 local_name: name,
+//                 schema_name: "".to_string(),
+//             },
+//             version,
+//             schema_name,
+//             is_relocatable,
+//             dependencies: dependencies.0,
+//         })
+//     }
+// }
 
 impl SqlObject for Extension {
     fn name(&self) -> &SchemaQualifiedName {
@@ -51,6 +60,17 @@ impl SqlObject for Extension {
 
     fn object_type_name(&self) -> &str {
         "EXTENSION"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: Oid(0),
+            catalog: PgCatalog::Extension,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {

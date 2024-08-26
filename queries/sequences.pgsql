@@ -1,9 +1,10 @@
 SELECT
+    s.seqrelid AS "oid",
 	TO_JSONB(JSON_OBJECT(
 		'schema_name': quote_ident(sn.nspname),
 		'local_name': quote_ident(sc.relname)
 	)) AS "name",
-	pg_catalog.format_type(seqtypid, null) AS "data_type",
+	pg_catalog.format_type(s.seqtypid, null) AS "data_type",
 	s.seqincrement AS increment,
 	s.seqmin AS min_value,
 	s.seqmax AS max_value,
@@ -19,7 +20,21 @@ SELECT
 	            ),
 	            'name': sa.attname
 	        ))
-	END AS "owner"
+	END AS "owner",
+	TO_JSONB(
+        CASE
+            WHEN sa.attnum IS NOT NULL THEN
+                ARRAY[JSON_OBJECT(
+                    'catalog': 'pg_class',
+                    'oid': CAST(so.oid AS integer)
+                )]
+            ELSE
+                ARRAY[JSON_OBJECT(
+                    'catalog': 'pg_namespace',
+                    'oid': CAST(sn.oid AS integer)
+                )]
+        END
+    ) AS "dependencies"
 FROM pg_catalog.pg_sequence AS s
 JOIN pg_catalog.pg_class AS sc
     ON s.seqrelid = sc.oid

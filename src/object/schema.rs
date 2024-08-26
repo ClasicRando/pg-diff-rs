@@ -2,10 +2,11 @@ use std::fmt::Write;
 
 use sqlx::postgres::PgRow;
 use sqlx::{query_as, FromRow, PgPool, Row};
+use sqlx::postgres::types::Oid;
 
 use crate::PgDiffError;
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
     let schemas_query = include_str!("./../../queries/schemas.pgsql");
@@ -21,15 +22,18 @@ pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
 
 #[derive(Debug, PartialEq)]
 pub struct Schema {
+    pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
     pub(crate) owner: String,
 }
 
 impl<'r> FromRow<'r, PgRow> for Schema {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let oid: Oid = row.try_get("oid")?;
         let name: String = row.try_get("name")?;
         let owner: String = row.try_get("owner")?;
         Ok(Self {
+            oid,
             name: SchemaQualifiedName {
                 local_name: "".to_string(),
                 schema_name: name,
@@ -46,6 +50,17 @@ impl SqlObject for Schema {
 
     fn object_type_name(&self) -> &str {
         "SCHEMA"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Namespace,
+        }
+    }
+    
+    fn dependencies(&self) -> &[Dependency] {
+        &[]
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
@@ -65,5 +80,9 @@ impl SqlObject for Schema {
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(w, "DROP SCHEMA {};", self.name)?;
         Ok(())
+    }
+
+    fn dependencies_met(&self, _: &[Dependency]) -> bool {
+        true
     }
 }

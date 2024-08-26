@@ -4,6 +4,7 @@ WITH simple_table_columns AS (
     WHERE NOT a.attisdropped
 ), table_triggers AS (
     SELECT
+        t.oid,
         tc.oid table_oid,
         t.tgname AS "name",
         TO_JSONB(JSON_OBJECT(
@@ -18,6 +19,7 @@ WITH simple_table_columns AS (
             'schema_name': quote_ident(tpn.nspname),
             'local_name': quote_ident(tp.proname)
         )) AS function_name,
+        tp.oid function_oid,
 		CAST(t.tgtype::INT AS BIT(7)) & b'1000000' >> 6 = b'0000001' AS is_instead,
 		CAST(t.tgtype::INT AS BIT(7)) & b'0100000' >> 5 = b'0000001' AS is_truncate,
 		CAST(t.tgtype::INT AS BIT(7)) & b'0010000' >> 4 = b'0000001' AS is_update,
@@ -46,15 +48,12 @@ WITH simple_table_columns AS (
             ON a.attrelid = tc.oid
             AND ta.attnum = a.attnum
     ) AS ta
---    CROSS JOIN LATERAL (
---        SELECT ARRAY_AGG(GET_BYTE(t.tgargs, targ.i - 1)) targs
---        FROM GENERATE_SERIES(1, LENGTH(t.tgargs)) targ(i)
---    ) AS targ
     WHERE
         t.tgparentid = 0
         AND NOT t.tgisinternal
 )
 SELECT
+    tt.oid,
     tt.table_oid,
     tt.name,
     tt.schema_qualified_name,
@@ -87,7 +86,17 @@ SELECT
     tt.is_row_level AS is_row_level,
     tt.when_expression AS when_expression,
     tt.function_name AS function_name,
-    tt.tgargs AS function_args
+    tt.tgargs AS function_args,
+    TO_JSONB(ARRAY[
+        JSON_OBJECT(
+            'catalog': 'pg_class',
+            'oid': CAST(tt.table_oid AS integer)
+        ),
+        JSON_OBJECT(
+            'catalog': 'pg_proc',
+            'oid': CAST(tt.function_oid AS integer)
+        )
+    ]) AS "dependencies"
 FROM table_triggers tt
 WHERE
     tt.table_oid = ANY($1)

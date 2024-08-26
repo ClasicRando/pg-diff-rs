@@ -1,4 +1,5 @@
 SELECT
+    p.oid,
 	TO_JSONB(JSON_OBJECT(
 		'schema_name': quote_ident(pn.nspname),
 		'local_name': quote_ident(p.proname)

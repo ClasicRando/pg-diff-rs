@@ -8,11 +8,10 @@ use sqlx::{query_as, FromRow, PgPool, Row};
 
 use crate::{join_display_iter, map_join_slice, PgDiffError};
 
-use super::policy::Policy;
 use super::sequence::SequenceOptions;
 use super::{
-    compare_option_lists, Collation, SchemaQualifiedName, SqlObject, StorageParameter, TableSpace,
-    TablespaceCompare,
+    compare_option_lists, Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject,
+    StorageParameter, TableSpace, TablespaceCompare,
 };
 
 pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, PgDiffError> {
@@ -32,13 +31,13 @@ pub struct Table {
     pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
     pub(crate) columns: Vec<Column>,
-    pub(crate) policies: Option<Vec<Policy>>,
     pub(crate) partition_key_def: Option<String>,
     pub(crate) partition_values: Option<String>,
     pub(crate) inherited_tables: Option<Vec<SchemaQualifiedName>>,
     pub(crate) partitioned_parent_table: Option<SchemaQualifiedName>,
     pub(crate) tablespace: Option<TableSpace>,
     pub(crate) with: Option<Vec<StorageParameter>>,
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl<'r> FromRow<'r, PgRow> for Table {
@@ -46,7 +45,6 @@ impl<'r> FromRow<'r, PgRow> for Table {
         let oid: Oid = row.try_get("oid")?;
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let columns: Json<Vec<Column>> = row.try_get("columns")?;
-        let policies: Option<Json<Vec<Policy>>> = row.try_get("policies")?;
         let partition_key_def: Option<String> = row.try_get("partition_key_def")?;
         let partition_values: Option<String> = row.try_get("partition_values")?;
         let inherited_tables: Option<Json<Vec<SchemaQualifiedName>>> =
@@ -55,17 +53,18 @@ impl<'r> FromRow<'r, PgRow> for Table {
             row.try_get("partitioned_parent_table")?;
         let tablespace: Option<TableSpace> = row.try_get("tablespace")?;
         let with: Option<Vec<StorageParameter>> = row.try_get("with")?;
+        let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
         Ok(Self {
             oid,
             name: name.0,
             columns: columns.0,
-            policies: policies.map(|j| j.0),
             partition_key_def,
             partition_values,
             inherited_tables: inherited_tables.map(|j| j.0),
             partitioned_parent_table: partitioned_parent_table.map(|j| j.0),
             tablespace,
             with,
+            dependencies: dependencies.0,
         })
     }
 }
@@ -77,6 +76,17 @@ impl SqlObject for Table {
 
     fn object_type_name(&self) -> &str {
         "TABLE"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Class,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
@@ -116,7 +126,7 @@ impl SqlObject for Table {
         if let Some(storage_parameter) = &self.with {
             write!(w, "\nWITH (")?;
             join_display_iter(storage_parameter.iter(), ",", w)?;
-            write!(w, ")'")?;
+            write!(w, ")")?;
         }
         if let Some(tablespace) = &self.tablespace {
             write!(w, "\nTABLESPACE {}", tablespace)?;

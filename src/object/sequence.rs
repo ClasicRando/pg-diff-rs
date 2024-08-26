@@ -1,13 +1,14 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
+use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgRow;
 use sqlx::types::Json;
 use sqlx::{query_as, FromRow, PgPool, Row};
 
 use crate::PgDiffError;
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequence>, PgDiffError> {
     let sequence_query = include_str!("./../../queries/sequences.pgsql");
@@ -23,23 +24,36 @@ pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequen
 
 #[derive(Debug, PartialEq)]
 pub struct Sequence {
+    pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
     pub(crate) data_type: String,
     pub(crate) owner: Option<SequenceOwner>,
     pub(crate) sequence_options: SequenceOptions,
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl<'r> FromRow<'r, PgRow> for Sequence {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let oid: Oid = row.try_get("oid")?;
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let data_type = row.try_get("data_type")?;
         let owner: Option<Json<SequenceOwner>> = row.try_get("owner")?;
-        let sequence_options: Json<SequenceOptions> = row.try_get("sequence_options")?;
+        let sequence_options: SequenceOptions = SequenceOptions {
+            increment: row.try_get("increment")?,
+            min_value: row.try_get("min_value")?,
+            max_value: row.try_get("max_value")?,
+            start_value: row.try_get("start_value")?,
+            cache: row.try_get("cache")?,
+            is_cycle: row.try_get("is_cycle")?,
+        };
+        let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
         Ok(Self {
+            oid,
             name: name.0,
             data_type,
             owner: owner.map(|j| j.0),
-            sequence_options: sequence_options.0,
+            sequence_options,
+            dependencies: dependencies.0,
         })
     }
 }
@@ -51,6 +65,17 @@ impl SqlObject for Sequence {
 
     fn object_type_name(&self) -> &str {
         "SEQUENCE"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Class,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
@@ -163,6 +188,7 @@ impl SequenceOptions {
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SequenceOwner {
+    pub(crate) oid: Oid,
     pub(crate) table_name: SchemaQualifiedName,
     pub(crate) column_name: String,
 }

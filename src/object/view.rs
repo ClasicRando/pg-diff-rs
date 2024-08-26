@@ -1,9 +1,10 @@
 use std::fmt::Write;
 use sqlx::{PgPool, query_as};
+use sqlx::postgres::types::Oid;
 
 use crate::{join_slice, PgDiffError};
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{compare_option_lists, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
     let views_query = include_str!("./../../queries/views.pgsql");
@@ -19,11 +20,14 @@ pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgD
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct View {
+    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     pub(crate) columns: Option<Vec<String>>,
     pub(crate) query: String,
     pub(crate) options: Option<Vec<String>>,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl SqlObject for View {
@@ -35,19 +39,30 @@ impl SqlObject for View {
         "VIEW"
     }
 
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Class,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
+    }
+
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE OR REPLACE VIEW {}", self.name)?;
         if let Some(columns) = &self.columns {
-            write!(w, "('")?;
+            write!(w, "(")?;
             join_slice(columns.as_slice(), ",", w)?;
-            write!(w, ")'")?;
+            write!(w, ")")?;
         }
         if let Some(options) = &self.options {
-            write!(w, "('")?;
+            write!(w, "(")?;
             join_slice(options.as_slice(), ",", w)?;
-            write!(w, ")'")?;
+            write!(w, ")")?;
         }
-        writeln!(w, " AS\n{};", self.query)?;
+        writeln!(w, " AS\n{}", self.query)?;
         Ok(())
     }
 

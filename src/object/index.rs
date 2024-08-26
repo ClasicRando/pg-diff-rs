@@ -5,9 +5,7 @@ use sqlx::{query_as, PgPool};
 
 use crate::PgDiffError;
 
-use super::{
-    compare_option_lists, IndexParameters, SchemaQualifiedName, SqlObject, TablespaceCompare,
-};
+use super::{PgCatalog, compare_option_lists, Dependency, IndexParameters, SchemaQualifiedName, SqlObject, TablespaceCompare};
 
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
     let indexes_query = include_str!("./../../queries/indexes.pgsql");
@@ -23,6 +21,7 @@ pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, Pg
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct Index {
+    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
@@ -33,6 +32,8 @@ pub struct Index {
     pub(crate) definition_statement: String,
     #[sqlx(flatten)]
     pub(crate) parameters: IndexParameters,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl PartialEq for Index {
@@ -48,6 +49,17 @@ impl SqlObject for Index {
 
     fn object_type_name(&self) -> &str {
         "INDEX"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Class,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {

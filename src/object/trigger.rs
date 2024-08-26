@@ -1,12 +1,12 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
+use sqlx::{query_as, PgPool};
 
 use crate::{join_display_iter, join_slice, PgDiffError};
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_triggers(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Trigger>, PgDiffError> {
     let triggers_query = include_str!("./../../queries/triggers.pgsql");
@@ -22,6 +22,7 @@ pub async fn get_triggers(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Trigger>,
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Trigger {
+    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     pub(crate) name: String,
     #[sqlx(json)]
@@ -38,6 +39,8 @@ pub struct Trigger {
     #[sqlx(json)]
     pub(crate) function_name: SchemaQualifiedName,
     pub(crate) function_args: Option<Vec<u8>>,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl SqlObject for Trigger {
@@ -47,6 +50,17 @@ impl SqlObject for Trigger {
 
     fn object_type_name(&self) -> &str {
         "TRIGGER"
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Trigger,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {

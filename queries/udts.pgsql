@@ -1,4 +1,22 @@
+WITH custom_types AS (
+    SELECT ct.oid, ct.typtype, ct.typname, ct.typrelid, ct.typnamespace
+    FROM pg_catalog.pg_type AS ct
+    WHERE
+        ct.typtype IN ('e','r')
+        OR
+        (
+            ct.typtype = 'c'
+            AND EXISTS(
+                SELECT NULL
+                FROM pg_catalog.pg_class tc
+                WHERE
+                    tc.oid = ct.typrelid
+                    AND tc.relkind = 'c'
+            )
+        )
+)
 SELECT
+    t.oid,
     TO_JSONB(JSON_OBJECT(
         'schema_name': quote_ident(tn.nspname),
         'local_name': quote_ident(t.typname)
@@ -12,7 +30,8 @@ SELECT
                         'name': a.attname,
                         'data_type': pg_catalog.format_type(a.atttypid, a.atttypmod),
                         'size': a.attlen,
-                        'collation': '"'||cn.nspname||'"."'||cl.collname||'"'
+                        'collation': '"'||cn.nspname||'"."'||cl.collname||'"',
+                        'is_base_type': t.typtype = 'b'
                     ) ORDER BY a.attnum) AS "columns"
                 FROM pg_catalog.pg_attribute AS a
                 JOIN pg_catalog.pg_type AS at
@@ -45,26 +64,50 @@ SELECT
                 WHERE t.oid = tr.rngtypid
             )
         )
-    END) AS "udt_type"
-FROM pg_catalog.pg_type AS t
+    END) AS "udt_type",
+    TO_JSONB(COALESCE(td.dependencies || tyd.dependencies, '{}')) AS "dependencies"
+FROM custom_types AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.typnamespace = tn.oid
+CROSS JOIN LATERAL (
+	SELECT
+	    ARRAY_AGG(JSON_OBJECT(
+            'catalog': 'pg_class',
+            'oid': CAST(td.oid AS integer)
+        )) AS "dependencies"
+	FROM (
+		SELECT DISTINCT td.oid
+		FROM pg_catalog.pg_depend d
+		JOIN pg_catalog.pg_class td
+			ON d.refclassid = 'pg_class'::REGCLASS
+			AND d.refobjid = td.oid
+		WHERE
+			d.classid = 'pg_type'::REGCLASS
+			AND d.objid = t.oid
+			AND d.deptype IN ('n','a')
+			AND td.relkind IN ('r','p')
+	) td
+) td
+CROSS JOIN LATERAL (
+    SELECT
+        ARRAY_AGG(JSON_OBJECT(
+            'catalog': 'pg_type',
+            'oid': CAST(tyd.oid AS integer)
+        )) AS "dependencies"
+    FROM (
+        SELECT DISTINCT tyd.oid
+        FROM pg_catalog.pg_depend AS d
+        JOIN custom_types AS tyd
+            ON d.refclassid = 'pg_type'::REGCLASS
+            AND d.refobjid = tyd.oid
+        WHERE
+            d.classid = 'pg_type'::REGCLASS
+            AND d.objid = t.oid
+            AND d.deptype = 'n'
+    ) tyd
+) tyd
 WHERE
-    (
-        t.typtype IN ('e','r')
-        OR
-        (
-            t.typtype = 'c'
-            AND EXISTS(
-                SELECT NULL
-                FROM pg_catalog.pg_class tc
-                WHERE
-                    tc.oid = t.typrelid
-                    AND tc.relkind = 'c'
-            )
-        )
-    )
-    AND tn.nspname = ANY($1)
+    tn.nspname = ANY($1)
     -- Exclude tables owned by extensions
     AND NOT EXISTS (
         SELECT NULL

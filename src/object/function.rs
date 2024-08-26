@@ -4,8 +4,9 @@ use serde::Deserialize;
 use sqlx::postgres::PgRow;
 use sqlx::types::Json;
 use sqlx::{FromRow, PgPool, query_as, Row};
+use sqlx::postgres::types::Oid;
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{PgCatalog, Dependency, SchemaQualifiedName, SqlObject};
 use crate::PgDiffError;
 
 pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Function>, PgDiffError> {
@@ -26,6 +27,7 @@ pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Functi
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
+    pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
     pub(crate) is_procedure: bool,
     pub(crate) signature: String,
@@ -36,6 +38,7 @@ pub struct Function {
 
 impl<'r> FromRow<'r, PgRow> for Function {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let oid: Oid = row.try_get("oid")?;
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let is_procedure: bool = row.try_get("is_procedure")?;
         let signature: String = row.try_get("signature")?;
@@ -44,6 +47,7 @@ impl<'r> FromRow<'r, PgRow> for Function {
         let function_dependencies: Option<Json<Vec<FunctionDependency>>> =
             row.try_get("function_dependencies")?;
         Ok(Self {
+            oid,
             name: name.0,
             is_procedure,
             signature,
@@ -65,6 +69,17 @@ impl SqlObject for Function {
         } else {
             "FUNCTION"
         }
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Proc,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        todo!()
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {

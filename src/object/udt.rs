@@ -1,11 +1,14 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{query_as, PgPool};
+use sqlx::{query_as, PgPool, FromRow, Error, Row};
+use sqlx::postgres::PgRow;
+use sqlx::postgres::types::Oid;
+use sqlx::types::Json;
 
 use crate::{join_display_iter, join_slice, PgDiffError};
 
-use super::{SchemaQualifiedName, SqlObject};
+use super::{Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDiffError> {
     let udts_query = include_str!("./../../queries/udts.pgsql");
@@ -21,10 +24,13 @@ pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDif
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Udt {
+    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     #[sqlx(json)]
     pub(crate) udt_type: UdtType,
+    #[sqlx(json)]
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl SqlObject for Udt {
@@ -34,6 +40,17 @@ impl SqlObject for Udt {
 
     fn object_type_name(&self) -> &str {
         self.udt_type.name()
+    }
+
+    fn dependency_declaration(&self) -> Dependency {
+        Dependency {
+            oid: self.oid,
+            catalog: PgCatalog::Type,
+        }
+    }
+
+    fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
@@ -192,6 +209,7 @@ pub struct CompositeField {
     pub(crate) data_type: String,
     pub(crate) size: i32,
     pub(crate) collation: Option<Collation>,
+    pub(crate) is_base_type: bool,
 }
 
 impl Display for CompositeField {
