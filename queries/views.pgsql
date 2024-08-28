@@ -8,7 +8,7 @@ WITH custom_types AS (
             ct.typtype = 'c'
             AND EXISTS(
                 SELECT NULL
-                FROM pg_catalog.pg_class tc
+                FROM pg_catalog.pg_class AS tc
                 WHERE
                     tc.oid = ct.typrelid
                     AND tc.relkind = 'c'
@@ -25,7 +25,7 @@ WITH custom_types AS (
 		(
 			SELECT
 				ARRAY_AGG(a.attname ORDER BY a.attnum) AS "columns"
-			FROM pg_catalog.pg_attribute a
+			FROM pg_catalog.pg_attribute AS a
 			WHERE
 				a.attnum > 0
 				AND NOT a.attisdropped
@@ -33,8 +33,8 @@ WITH custom_types AS (
 		) AS "columns",
 		pg_get_viewdef(vc.oid) AS "query",
 		vc.reloptions AS "options"
-	FROM pg_catalog.pg_class vc
-	JOIN pg_catalog.pg_namespace vn
+	FROM pg_catalog.pg_class AS vc
+	JOIN pg_catalog.pg_namespace AS vn
 		ON vc.relnamespace = vn.oid
 	WHERE
 		vc.relkind = 'v'
@@ -51,8 +51,8 @@ WITH custom_types AS (
 SELECT
 	v.oid, v.name, v.columns, v.query, v.options,
 	TO_JSONB(COALESCE(cd.dependencies || tyd.dependencies, '{}')) AS "dependencies"
-FROM pg_catalog.pg_rewrite r
-JOIN query_views v
+FROM pg_catalog.pg_rewrite AS r
+JOIN query_views AS v
 	ON r.ev_class = v.oid
 CROSS JOIN LATERAL (
 	SELECT
@@ -62,17 +62,17 @@ CROSS JOIN LATERAL (
         )) AS "dependencies"
 	FROM (
 		SELECT DISTINCT cd.oid
-		FROM pg_catalog.pg_depend d
-		JOIN pg_catalog.pg_class cd
+		FROM pg_catalog.pg_depend AS d
+		JOIN pg_catalog.pg_class AS cd
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = cd.oid
 		WHERE
 			d.classid = 'pg_rewrite'::REGCLASS
 			AND d.objid = r.oid
-			AND d.deptype IN ('n','a')
+			AND d.deptype = 'n'
 			AND cd.relkind IN ('r','p','v')
-	) cd
-) cd
+	) AS cd
+) AS cd
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
@@ -89,7 +89,7 @@ CROSS JOIN LATERAL (
             d.classid = 'pg_rewrite'::REGCLASS
             AND d.objid = r.oid
             AND d.deptype = 'n'
-    ) tyd
-) tyd
+    ) AS tyd
+) AS tyd
 WHERE
     v.nspname = ANY($1);

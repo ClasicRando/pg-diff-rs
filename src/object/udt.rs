@@ -1,12 +1,10 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{query_as, PgPool, FromRow, Error, Row};
-use sqlx::postgres::PgRow;
+use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
-use sqlx::types::Json;
 
-use crate::{join_display_iter, join_slice, PgDiffError};
+use crate::{PgDiffError, write_join};
 
 use super::{Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
@@ -57,13 +55,13 @@ impl SqlObject for Udt {
         match &self.udt_type {
             UdtType::Enum { labels } => {
                 write!(w, "CREATE TYPE {} AS ENUM (\n\t'", self.name)?;
-                join_slice(labels.as_slice(), "',\n\t'", w)?;
-                writeln!(w, "'\n);")?;
+                write_join!(w, labels.iter(), "',\n\t'");
+                w.write_str("'\n);\n")?;
             }
             UdtType::Composite { attributes } => {
                 write!(w, "CREATE TYPE {} AS (\n\t", self.name)?;
-                join_display_iter(attributes.iter(), ",\n\t", w)?;
-                writeln!(w, "\n);")?;
+                write_join!(w, attributes.iter(), ",\n\t");
+                w.write_str("\n);\n")?;
             }
             UdtType::Range { subtype } => {
                 writeln!(
@@ -147,7 +145,7 @@ impl SqlObject for Udt {
                     if let Some(collation) = &attribute.collation {
                         write!(w, " COLLATE {collation}")?;
                     }
-                    writeln!(w, ";")?;
+                    w.write_str(";\n")?;
                 }
                 Ok(())
             }

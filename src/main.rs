@@ -1,15 +1,15 @@
-use std::fmt::{Display, Write};
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
-use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgConnectOptions;
 use thiserror::Error as ThisError;
 
 use crate::object::{
-    append_create_statements_to_owner_table_file, get_database, write_create_statements_to_file,
-    SchemaQualifiedName, SqlObject,
+    append_create_statements_to_owner_table_file, get_database, SchemaQualifiedName,
+    write_create_statements_to_file,
 };
 
 mod object;
@@ -34,6 +34,35 @@ pub enum PgDiffError {
     InvalidMigration { object_name: String, reason: String },
     #[error("This can never happen")]
     Infallible(#[from] std::convert::Infallible),
+    #[error("Parse error for {object_name}. {error}")]
+    PgQuery {
+        object_name: SchemaQualifiedName,
+        error: pg_query::Error,
+    },
+}
+
+#[macro_export]
+macro_rules! write_join {
+    ($write:ident, $items:ident.iter(), $separator:literal) => {
+        let mut iter = $items.iter();
+        if let Some(item) = iter.next() {
+            write!($write, "{item}")?;
+            for item in iter {
+                $write.write_str($separator)?;
+                write!($write, "{item}")?;
+            }
+        };
+    };
+    ($write:ident, $items:expr, $separator:literal) => {
+        let mut iter = $items;
+        if let Some(item) = iter.next() {
+            write!($write, "{item}")?;
+            for item in iter {
+                $write.write_str($separator)?;
+                write!($write, "{item}")?;
+            }
+        };
+    };
 }
 
 fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>(
@@ -48,41 +77,8 @@ fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>
     };
     map(item, w)?;
     for item in iter {
-        write!(w, "{separator}")?;
+        w.write_str(separator)?;
         map(item, w)?;
-    }
-    Ok(())
-}
-
-fn join_display_iter<D: Display, I: Iterator<Item = D>, W: Write>(
-    mut iter: I,
-    separator: &str,
-    w: &mut W,
-) -> Result<(), std::fmt::Error> {
-    let Some(item) = iter.next() else {
-        return Ok(());
-    };
-    write!(w, "{item}")?;
-    for item in iter {
-        write!(w, "{separator}")?;
-        write!(w, "{item}")?;
-    }
-    Ok(())
-}
-
-fn join_slice<I: AsRef<str>, W: Write>(
-    slice: &[I],
-    separator: &str,
-    w: &mut W,
-) -> Result<(), std::fmt::Error> {
-    let mut iter = slice.iter();
-    let Some(item) = iter.next() else {
-        return Ok(());
-    };
-    write!(w, "{}", item.as_ref())?;
-    for item in iter {
-        write!(w, "{separator}")?;
-        write!(w, "{}", item.as_ref())?;
     }
     Ok(())
 }
@@ -149,7 +145,7 @@ async fn main() -> Result<(), PgDiffError> {
                 connect_options = connect_options.password(&password);
             }
             let pool = PgPool::connect_with(connect_options).await?;
-            let database = get_database(&pool).await?;
+            let mut database = get_database(&pool).await?;
             for schema in &database.schemas {
                 write_create_statements_to_file(schema, &output_path).await?;
             }
@@ -168,7 +164,7 @@ async fn main() -> Result<(), PgDiffError> {
                         &policy.owner_table_name,
                         &output_path,
                     )
-                        .await?
+                    .await?
                 }
                 for constraint in database
                     .constraints
@@ -215,7 +211,8 @@ async fn main() -> Result<(), PgDiffError> {
                     write_create_statements_to_file(sequence, &output_path).await?;
                 }
             }
-            for function in &database.functions {
+            for function in &mut database.functions {
+                function.extract_more_dependencies(&pool).await?;
                 write_create_statements_to_file(function, &output_path).await?;
             }
             for view in &database.views {
@@ -228,6 +225,5 @@ async fn main() -> Result<(), PgDiffError> {
         Commands::Migrate { .. } => {}
         Commands::Plan { .. } => {}
     }
-    // println!("{database:?}");
     Ok(())
 }

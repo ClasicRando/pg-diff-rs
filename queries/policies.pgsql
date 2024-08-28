@@ -19,8 +19,8 @@ SELECT
     pol.polpermissive AS is_permissive,
     (
         SELECT ARRAY_AGG(rolname)
-        FROM roles
-        WHERE roles.oid = ANY(pol.polroles)
+        FROM roles AS r
+        WHERE r.oid = ANY(pol.polroles)
     ) AS applies_to,
     pol.polcmd AS command,
     pg_catalog.pg_get_expr(
@@ -45,7 +45,7 @@ SELECT
             AND a.attnum > 0
     ) AS "columns",
     TO_JSONB(td.dependencies || pd.dependencies || tyd.dependencies) AS "dependencies"
-FROM pg_catalog.pg_policy as pol
+FROM pg_catalog.pg_policy AS pol
 JOIN pg_catalog.pg_class AS t
     ON pol.polrelid = t.oid
 JOIN pg_catalog.pg_namespace AS tn
@@ -58,17 +58,17 @@ CROSS JOIN LATERAL (
         )) AS "dependencies"
 	FROM (
 		SELECT DISTINCT td.oid
-		FROM pg_catalog.pg_depend d
-		JOIN pg_catalog.pg_class td
+		FROM pg_catalog.pg_depend AS d
+		JOIN pg_catalog.pg_class AS td
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = td.oid
 		WHERE
             d.classid = 'pg_policy'::REGCLASS
             AND d.objid = pol.oid
-			AND d.deptype IN ('n','a')
+			AND d.deptype = 'n'
 			AND td.relkind IN ('r','p')
-	) td
-) td
+	) AS td
+) AS td
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
@@ -83,7 +83,7 @@ CROSS JOIN LATERAL (
         d.classid = 'pg_policy'::REGCLASS
         AND d.objid = pol.oid
         AND d.deptype = 'n'
-) pd
+) AS pd
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
@@ -115,7 +115,7 @@ CROSS JOIN LATERAL (
                     )
                 )
             )
-    ) tyd
-) tyd
+    ) AS tyd
+) AS tyd
 WHERE
     pol.polrelid = ANY($1);

@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
-use crate::{join_display_iter, join_slice, PgDiffError};
+use crate::{write_join, PgDiffError};
 
 use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
@@ -65,10 +65,10 @@ impl SqlObject for Trigger {
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE TRIGGER {} {} ", self.name, self.timing.as_ref())?;
-        join_display_iter(self.events.iter(), " ", w)?;
+        write_join!(w, self.events.iter(), " ");
         write!(w, "\nON {}", self.owner_table_name)?;
         if self.old_name.is_some() || self.old_name.is_some() {
-            write!(w, "\nREFERENCING")?;
+            w.write_str("\nREFERENCING")?;
         }
         if let Some(old_table) = &self.old_name {
             write!(w, " OLD TABLE AS {old_table}")?;
@@ -92,19 +92,22 @@ impl SqlObject for Trigger {
         match &self.function_args {
             Some(args) if !args.is_empty() => {
                 w.write_char('\'')?;
-                let iter = args.split(|byte| *byte == 0).filter_map(|chunk| {
-                    let str = String::from_utf8_lossy(chunk);
-                    if str.is_empty() {
-                        return None;
-                    }
-                    Some(str)
-                });
-                join_display_iter(iter, "','", w)?;
+                write_join!(
+                    w,
+                    args.split(|byte| *byte == 0).filter_map(|chunk| {
+                        let str = String::from_utf8_lossy(chunk);
+                        if str.is_empty() {
+                            return None;
+                        }
+                        Some(str)
+                    }),
+                    "','"
+                );
                 w.write_char('\'')?;
             }
             _ => {}
         }
-        writeln!(w, ");")?;
+        w.write_str(");\n")?;
         Ok(())
     }
 
@@ -158,7 +161,7 @@ impl Display for TriggerEvent {
                 write!(f, "UPDATE")?;
                 if let Some(columns) = columns {
                     write!(f, " OF ")?;
-                    join_slice(columns.as_slice(), ",", f)?;
+                    write_join!(f, columns.iter(), ",");
                 }
                 Ok(())
             }

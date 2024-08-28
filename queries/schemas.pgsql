@@ -2,8 +2,8 @@ SELECT
     n.oid,
     n.nspname AS "name",
     r.rolname AS "owner"
-FROM pg_catalog.pg_namespace n
-JOIN pg_catalog.pg_roles r
+FROM pg_catalog.pg_namespace AS n
+JOIN pg_catalog.pg_roles AS r
     ON n.nspowner = r.oid
 WHERE
     n.nspname NOT IN ('pg_catalog', 'information_schema')

@@ -48,12 +48,12 @@ WITH table_columns AS (
             'storage': a.attstorage,
             'compression': a.attcompression
 		) ORDER BY a.attnum) AS "columns"
-	FROM pg_catalog.pg_attribute a
-	LEFT JOIN pg_catalog.pg_collation cl
+	FROM pg_catalog.pg_attribute AS a
+	LEFT JOIN pg_catalog.pg_collation AS cl
 	    ON a.attcollation = cl.oid
-	LEFT JOIN pg_catalog.pg_namespace cn
+	LEFT JOIN pg_catalog.pg_namespace AS cn
 	    ON cl.collnamespace = cn.oid
-	LEFT JOIN pg_catalog.pg_attrdef def
+	LEFT JOIN pg_catalog.pg_attrdef AS def
 	    ON a.attrelid = def.adrelid
 	    AND a.attnum = def.adnum
 	WHERE
@@ -115,7 +115,8 @@ CROSS JOIN LATERAL (
         pt.relkind = 'p'
         AND t.oid = p.inhrelid
 ) AS pp
-JOIN table_columns AS c ON c.attrelid = t.oid
+JOIN table_columns AS c
+    ON c.attrelid = t.oid
 WHERE
     tn.nspname = ANY($1)
 	AND t.relkind IN ('r','p')

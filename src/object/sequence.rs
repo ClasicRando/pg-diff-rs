@@ -87,7 +87,7 @@ impl SqlObject for Sequence {
         if let Some(owner) = &self.owner {
             writeln!(w, " {owner};")?;
         } else {
-            writeln!(w, " OWNED BY NONE;")?;
+            w.write_str(" OWNED BY NONE;\n")?;
         }
         Ok(())
     }
@@ -128,14 +128,14 @@ impl SqlObject for Sequence {
                 write!(w, " OWNED BY {new_owner}")?;
             }
             (Some(_), None) => {
-                write!(w, " OWNED BY NONE")?;
+                w.write_str(" OWNED BY NONE")?;
             }
             (None, Some(new_owner)) => {
                 write!(w, " OWNED BY {new_owner}")?;
             }
             _ => {}
         }
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         Ok(())
     }
 

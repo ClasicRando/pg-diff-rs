@@ -1,18 +1,18 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
+use sqlx::{FromRow, PgPool, query_as, Row};
 use sqlx::postgres::PgRow;
+use sqlx::postgres::types::Oid;
 use sqlx::types::Json;
-use sqlx::{query_as, FromRow, PgPool, Row};
 
-use crate::{join_display_iter, map_join_slice, PgDiffError};
+use crate::{map_join_slice, PgDiffError, write_join};
 
-use super::sequence::SequenceOptions;
 use super::{
-    compare_option_lists, Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject,
-    StorageParameter, TableSpace, TablespaceCompare,
+    Collation, compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName,
+    SqlObject, StorageParameter, TableSpace, TablespaceCompare,
 };
+use super::sequence::SequenceOptions;
 
 pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, PgDiffError> {
     let tables_query = include_str!("./../../queries/tables.pgsql");
@@ -69,6 +69,8 @@ impl<'r> FromRow<'r, PgRow> for Table {
     }
 }
 
+impl OptionListObject for Table {}
+
 impl SqlObject for Table {
     fn name(&self) -> &SchemaQualifiedName {
         &self.name
@@ -94,29 +96,29 @@ impl SqlObject for Table {
         if let Some(partitioned_parent_table) = &self.partitioned_parent_table {
             write!(w, "PARTITION OF {partitioned_parent_table}")?;
         } else if !self.columns.is_empty() {
-            write!(w, "(\n\t")?;
+            w.write_str("(\n\t")?;
             map_join_slice(
                 self.columns.as_slice(),
                 |c, s| c.field_definition(true, s),
                 ",\n\t",
                 w,
             )?;
-            write!(w, "\n)")?;
+            w.write_str("\n)")?;
         }
         match &self.partition_values {
             Some(partition_values) => {
                 write!(w, "\nFOR VALUES {partition_values}")?;
             }
             None if self.partitioned_parent_table.is_some() => {
-                write!(w, "\nDEFAULT")?;
+                w.write_str("\nDEFAULT")?;
             }
             _ => {}
         }
         match &self.inherited_tables {
             Some(inherited_tables) if !inherited_tables.is_empty() => {
-                write!(w, "\nINHERITS (")?;
-                join_display_iter(inherited_tables.iter(), ",", w)?;
-                write!(w, ")")?;
+                w.write_str("\nINHERITS (")?;
+                write_join!(w, inherited_tables.iter(), ",");
+                w.write_str(")")?;
             }
             _ => {}
         }
@@ -124,14 +126,14 @@ impl SqlObject for Table {
             write!(w, "\nPARTITION BY {partition_key_def}")?;
         }
         if let Some(storage_parameter) = &self.with {
-            write!(w, "\nWITH (")?;
-            join_display_iter(storage_parameter.iter(), ",", w)?;
-            write!(w, ")")?;
+            w.write_str("\nWITH (")?;
+            write_join!(w, storage_parameter.iter(), ",");
+            w.write_str(")")?;
         }
         if let Some(tablespace) = &self.tablespace {
             write!(w, "\nTABLESPACE {}", tablespace)?;
         }
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         Ok(())
     }
 
@@ -206,13 +208,7 @@ impl SqlObject for Table {
         if compare_tablespace.has_diff() {
             writeln!(w, "ALTER TABLE {} {compare_tablespace};", self.name)?;
         }
-        compare_option_lists(
-            self.object_type_name(),
-            &self.name,
-            self.with.as_deref(),
-            new.with.as_deref(),
-            w,
-        )?;
+        compare_option_lists(self, self.with.as_deref(), new.with.as_deref(), w)?;
         Ok(())
     }
 
@@ -278,7 +274,7 @@ impl Column {
     fn add_column<W: Write>(&self, table: &Table, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "ALTER TABLE {} ADD COLUMN ", table.name)?;
         self.field_definition(false, w)?;
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         if let Some(storage) = &self.storage {
             writeln!(
                 w,
@@ -400,7 +396,7 @@ impl Column {
                         table.name, self.name
                     )?;
                     new_identity.sequence_options.alter_sequence(w)?;
-                    writeln!(w, ";")?;
+                    w.write_str(";\n")?;
                 }
             }
             (Some(_), None) => {

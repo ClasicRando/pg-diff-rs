@@ -1,10 +1,13 @@
 use std::fmt::Write;
+
 use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
 
-use crate::{join_slice, PgDiffError};
+use crate::{PgDiffError, write_join};
 
-use super::{compare_option_lists, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{
+    compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject,
+};
 
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
     let views_query = include_str!("./../../queries/views.pgsql");
@@ -30,6 +33,8 @@ pub struct View {
     pub(crate) dependencies: Vec<Dependency>,
 }
 
+impl OptionListObject for View {}
+
 impl SqlObject for View {
     fn name(&self) -> &SchemaQualifiedName {
         &self.name
@@ -53,14 +58,14 @@ impl SqlObject for View {
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE OR REPLACE VIEW {}", self.name)?;
         if let Some(columns) = &self.columns {
-            write!(w, "(")?;
-            join_slice(columns.as_slice(), ",", w)?;
-            write!(w, ")")?;
+            w.write_str("(")?;
+            write_join!(w, columns.iter(), ",");
+            w.write_str(")")?;
         }
         if let Some(options) = &self.options {
-            write!(w, "(")?;
-            join_slice(options.as_slice(), ",", w)?;
-            write!(w, ")")?;
+            w.write_str("(")?;
+            write_join!(w, options.iter(), ",");
+            w.write_str(")")?;
         }
         writeln!(w, " AS\n{}", self.query)?;
         Ok(())
@@ -75,13 +80,7 @@ impl SqlObject for View {
         if self.query != new.query {
             self.create_statements(w)?;
         }
-        compare_option_lists(
-            self.object_type_name(),
-            &self.name,
-            self.options.as_deref(),
-            new.options.as_deref(),
-            w,
-        )?;
+        compare_option_lists(self, self.options.as_deref(), new.options.as_deref(), w)?;
         Ok(())
     }
 

@@ -78,7 +78,7 @@ impl SqlObject for Extension {
         if self.is_relocatable {
             write!(w, " SCHEMA {}", self.schema_name)?;
         }
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         Ok(())
     }
 

@@ -78,7 +78,7 @@ impl SqlObject for Policy {
         if let Some(check_expression) = &self.check_expression {
             write!(w, " WITH CHECK ({check_expression})")?;
         }
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         Ok(())
     }
 
@@ -101,7 +101,7 @@ impl SqlObject for Policy {
         if let Some(check_expression) = &new.check_expression {
             write!(w, " WITH CHECK ({check_expression})")?;
         }
-        writeln!(w, ";")?;
+        w.write_str(";\n")?;
         Ok(())
     }
 

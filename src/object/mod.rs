@@ -1,3 +1,26 @@
+use std::fmt::{Display, Formatter, Write};
+use std::path::Path;
+
+use serde::Deserialize;
+use sqlx::PgPool;
+use sqlx::postgres::types::Oid;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::AsyncWriteExt;
+
+pub use constraint::{Constraint, get_constraints};
+pub use extension::{Extension, get_extensions};
+pub use function::{Function, get_functions};
+pub use index::{get_indexes, Index};
+pub use schema::{get_schemas, Schema};
+pub use sequence::{get_sequences, Sequence};
+pub use table::{get_tables, Table};
+pub use trigger::{get_triggers, Trigger};
+pub use udt::{get_udts, Udt};
+pub use view::{get_views, View};
+
+use crate::{PgDiffError, write_join};
+use crate::object::policy::{get_policies, Policy};
+
 mod constraint;
 mod extension;
 mod function;
@@ -9,27 +32,7 @@ mod table;
 mod trigger;
 mod udt;
 mod view;
-
-pub use constraint::{get_constraints, Constraint};
-pub use extension::{get_extensions, Extension};
-pub use function::{get_functions, Function};
-pub use index::{get_indexes, Index};
-pub use schema::{get_schemas, Schema};
-pub use sequence::{get_sequences, Sequence};
-pub use table::{get_tables, Table};
-pub use trigger::{get_triggers, Trigger};
-pub use udt::{get_udts, Udt};
-pub use view::{get_views, View};
-
-use crate::{join_display_iter, join_slice, map_join_slice, PgDiffError};
-use serde::Deserialize;
-use sqlx::postgres::types::Oid;
-use std::fmt::{Display, Formatter, Write};
-use std::path::Path;
-use sqlx::PgPool;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
-use crate::object::policy::{get_policies, Policy};
+mod plpgsql;
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
@@ -53,7 +56,7 @@ impl Display for IndexParameters {
         match &self.include {
             Some(include) if !include.is_empty() => {
                 write!(f, " INCLUDE(")?;
-                join_slice(include.as_slice(), ",", f)?;
+                write_join!(f, include.iter(), ",");
                 write!(f, ")")?;
             }
             _ => {}
@@ -61,15 +64,7 @@ impl Display for IndexParameters {
         match &self.with {
             Some(storage_parameters) if !storage_parameters.is_empty() => {
                 write!(f, " WITH(")?;
-                map_join_slice(
-                    storage_parameters.as_slice(),
-                    |p, f| {
-                        write!(f, "{p}")?;
-                        Ok(())
-                    },
-                    ",",
-                    f,
-                )?;
+                write_join!(f, storage_parameters.iter(), ",");
                 write!(f, ")")?;
             }
             _ => {}
@@ -98,7 +93,9 @@ pub trait SqlObject: PartialEq {
     /// Create the `DROP` statement for this object
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
     fn dependencies_met(&self, completed_objects: &[Dependency]) -> bool {
-        self.dependencies().iter().all(|d| completed_objects.contains(d))
+        self.dependencies()
+            .iter()
+            .all(|d| completed_objects.contains(d))
     }
 }
 
@@ -118,15 +115,15 @@ impl SchemaQualifiedName {
     fn from_schema_name(schema_name: &str) -> Self {
         Self {
             schema_name: schema_name.to_string(),
-            local_name: "".to_string()
+            local_name: "".to_string(),
         }
     }
-    
+
     fn from_type_name(schema_qualified_name: &str) -> Self {
         let parts = schema_qualified_name.split_once(".").unwrap();
         Self {
             schema_name: parts.0.to_string(),
-            local_name: parts.1.to_string()
+            local_name: parts.1.to_string(),
         }
     }
 }
@@ -176,10 +173,7 @@ pub struct TablespaceCompare<'a> {
 
 impl<'a> TablespaceCompare<'a> {
     pub fn new(old: Option<&'a TableSpace>, new: Option<&'a TableSpace>) -> Self {
-        Self {
-            old,
-            new,
-        }
+        Self { old, new }
     }
 
     pub fn has_diff(&self) -> bool {
@@ -209,36 +203,51 @@ impl<'a> Display for TablespaceCompare<'a> {
     }
 }
 
-pub fn compare_option_lists<O, W>(
-    object_type_name: &str,
-    object_name: &SchemaQualifiedName,
+pub trait OptionListObject: SqlObject {
+    fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
+    where
+        W: Write,
+    {
+        write!(w, "ALTER {} {}", self.object_type_name(), self.name())?;
+        Ok(())
+    }
+}
+
+pub fn compare_option_lists<A, O, W>(
+    object: &A,
     old: Option<&[O]>,
     new: Option<&[O]>,
     w: &mut W,
 ) -> Result<(), PgDiffError>
 where
+    A: OptionListObject,
     O: Display + PartialEq,
     W: Write,
 {
     if let Some(new_options) = new {
         let old_options = old.unwrap_or_default();
-        let set_options = new_options.iter().filter(|p| old_options.contains(*p));
-        write!(w, "ALTER {} {} SET (", object_type_name, object_name)?;
-        join_display_iter(set_options, ",", w)?;
-        writeln!(w, ");")?;
+        object.write_alter_prefix(w)?;
+        w.write_str("SET (")?;
+        write_join!(
+            w,
+            new_options.iter().filter(|p| old_options.contains(*p)),
+            ","
+        );
+        w.write_str(");\n")?;
     }
     if let Some(old_options) = old {
         let new_options = new.unwrap_or_default();
-        write!(w, "ALTER {} {} RESET (", object_type_name, object_name)?;
+        object.write_alter_prefix(w)?;
+        w.write_str("RESET (")?;
         for p in old_options.iter().filter(|p| new_options.contains(*p)) {
             let option = p.to_string();
             if let Some((first, _)) = option.split_once('=') {
-                write!(w, "{first}")?;
+                w.write_str(first)?;
             } else {
-                write!(w, "{option}")?;
+                w.write_str(option.as_str())?;
             }
         }
-        writeln!(w, ");")?;
+        w.write_str(");\n")?;
     }
     Ok(())
 }
@@ -259,7 +268,7 @@ pub struct Database {
 }
 
 pub async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
-    let schemas = get_schemas(pool).await?;
+    let mut schemas = get_schemas(pool).await?;
     let schema_names: Vec<&str> = schemas
         .iter()
         .map(|s| s.name.schema_name.as_str())
@@ -274,6 +283,14 @@ pub async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
     let sequences = get_sequences(pool, &schema_names).await?;
     let functions = get_functions(pool, &schema_names).await?;
     let views = get_views(pool, &schema_names).await?;
+    if let Some(index) = schemas
+        .iter()
+        .enumerate()
+        .find(|(_, schema)| schema.name.schema_name == "public")
+        .map(|(i, _)| i)
+    {
+        schemas.remove(index);
+    }
     Ok(Database {
         schemas,
         udts,

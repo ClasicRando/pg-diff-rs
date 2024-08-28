@@ -25,16 +25,16 @@ CROSS JOIN LATERAL (
 	)) AS "dependencies"
 	FROM (
 		SELECT DISTINCT ed.oid
-		FROM pg_catalog.pg_depend d
-		JOIN pg_catalog.pg_extension ed
+		FROM pg_catalog.pg_depend AS d
+		JOIN pg_catalog.pg_extension AS ed
 			ON d.refclassid = 'pg_extension'::REGCLASS
 			AND d.refobjid = ed.oid
 		WHERE
 			d.classid = 'pg_extension'::REGCLASS
 			AND d.objid = e.oid
 			AND d.deptype IN ('x')
-	) ed
-) ed
+	) AS ed
+) AS ed
 WHERE
     n.nspname NOT IN ('pg_catalog', 'information_schema')
     AND n.nspname !~ '^pg_toast'

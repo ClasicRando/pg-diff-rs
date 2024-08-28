@@ -23,12 +23,12 @@ WITH table_indexes AS (
         ON i.indrelid = t.oid
     JOIN pg_catalog.pg_namespace AS tn
         ON t.relnamespace = tn.oid
-    LEFT JOIN pg_catalog.pg_tablespace its
+    LEFT JOIN pg_catalog.pg_tablespace AS its
         ON ic.reltablespace = its.oid
     CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY ikey.ord) AS "columns"
         FROM UNNEST(i.indkey) WITH ORDINALITY AS ikey(attnum, ord)
-        JOIN pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_attribute AS a
             ON a.attrelid = t.oid
             AND a.attnum = ikey.attnum
         WHERE
@@ -37,7 +37,7 @@ WITH table_indexes AS (
     CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY ikey.ord) AS "columns"
         FROM UNNEST(i.indkey) WITH ORDINALITY AS ikey(attnum, ord)
-        JOIN pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_attribute AS a
             ON a.attrelid = t.oid
             AND a.attnum = ikey.attnum
         WHERE
@@ -63,7 +63,7 @@ SELECT
         'oid': CAST(ti.table_oid AS integer),
         'catalog': 'pg_class'
     )) AS "dependencies"
-FROM table_indexes ti
+FROM table_indexes AS ti
 WHERE
     ti.table_oid = ANY($1)
     -- Exclude tables owned by extensions

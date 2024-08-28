@@ -84,7 +84,7 @@ CROSS JOIN LATERAL (
 		WHERE
 			d.classid = 'pg_type'::REGCLASS
 			AND d.objid = t.oid
-			AND d.deptype IN ('n','a')
+			AND d.deptype = 'n'
 			AND td.relkind IN ('r','p')
 	) td
 ) td

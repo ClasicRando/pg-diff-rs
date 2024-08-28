@@ -1,6 +1,6 @@
 WITH simple_table_columns AS (
     SELECT a.attrelid, a.attname, a.attnum
-    FROM pg_catalog.pg_attribute a
+    FROM pg_catalog.pg_attribute AS a
     WHERE NOT a.attisdropped
 ), table_constraints AS (
     SELECT
@@ -33,12 +33,13 @@ WITH simple_table_columns AS (
                             'local_name': quote_ident(t.relname)
                         )
                         FROM pg_catalog.pg_class AS t
-                        JOIN pg_catalog.pg_namespace AS tn ON tn.oid = t.relnamespace
+                        JOIN pg_catalog.pg_namespace AS tn
+                            ON tn.oid = t.relnamespace
                         WHERE t.oid = co.confrelid
                     ),
                     'ref_columns': (
                         SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
-                        FROM simple_table_columns a
+                        FROM simple_table_columns AS a
                         WHERE
                             a.attrelid = co.conrelid
                             AND a.attnum = ANY(co.confkey)
@@ -81,7 +82,7 @@ WITH simple_table_columns AS (
                             'type': 'SetNull',
                             'columns': (
                                 SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
-                                FROM simple_table_columns a
+                                FROM simple_table_columns AS a
                                 WHERE
                                     a.attrelid = co.conrelid
                                     AND a.attnum = ANY(co.confdelsetcols)
@@ -91,7 +92,7 @@ WITH simple_table_columns AS (
                             'type': 'SetDefault',
                             'columns': (
                                 SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
-                                FROM simple_table_columns a
+                                FROM simple_table_columns AS a
                                 WHERE
                                     a.attrelid = co.conrelid
                                     AND a.attnum = ANY(co.confdelsetcols)
@@ -115,7 +116,7 @@ WITH simple_table_columns AS (
                     'columns': col."columns",
                     'are_nulls_distinct': (
                         SELECT NOT indnullsnotdistinct
-                        FROM pg_catalog.pg_index i
+                        FROM pg_catalog.pg_index AS i
                         WHERE
                             i.indexrelid = co.conindid
                             AND i.indisunique
@@ -135,9 +136,11 @@ WITH simple_table_columns AS (
                 )
             ELSE JSON_OBJECT('type': 'NotDeferrable')
         END AS "timing"
-    FROM pg_catalog.pg_constraint co
-    JOIN pg_catalog.pg_class t ON t.oid = co.conrelid
-    JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace
+    FROM pg_catalog.pg_constraint AS co
+    JOIN pg_catalog.pg_class AS t
+        ON t.oid = co.conrelid
+    JOIN pg_catalog.pg_namespace AS tn
+        ON tn.oid = t.relnamespace
     CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY a.attnum) as "columns"
         FROM simple_table_columns a
@@ -145,16 +148,16 @@ WITH simple_table_columns AS (
             a.attrelid = co.conrelid
             AND a.attnum = ANY(co.conkey)
     ) AS col
-    LEFT JOIN pg_catalog.pg_index i
+    LEFT JOIN pg_catalog.pg_index AS i
         ON co.conindid = i.indexrelid
     LEFT JOIN pg_catalog.pg_class AS ic
         ON i.indexrelid = ic.oid
-    LEFT JOIN pg_catalog.pg_tablespace its
+    LEFT JOIN pg_catalog.pg_tablespace AS its
         ON ic.reltablespace = its.oid
     CROSS JOIN LATERAL (
         SELECT ARRAY_AGG(a.attname ORDER BY ikey.ord) AS "columns"
         FROM UNNEST(i.indkey) WITH ORDINALITY AS ikey(attnum, ord)
-        JOIN pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_attribute AS a
             ON a.attrelid = t.oid
             AND a.attnum = ikey.attnum
         WHERE
@@ -172,7 +175,7 @@ SELECT
     tc.constraint_type,
     tc.timing,
 	TO_JSONB(td.dependencies) AS "dependencies"
-FROM table_constraints tc
+FROM table_constraints AS tc
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(
@@ -181,8 +184,8 @@ CROSS JOIN LATERAL (
         )) AS "dependencies"
 	FROM (
 		SELECT DISTINCT td.oid
-		FROM pg_catalog.pg_depend d
-		JOIN pg_catalog.pg_class td
+		FROM pg_catalog.pg_depend AS d
+		JOIN pg_catalog.pg_class AS td
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = td.oid
 		WHERE
@@ -190,8 +193,8 @@ CROSS JOIN LATERAL (
 			AND d.objid = tc.oid
 			AND d.deptype IN ('n','a')
 			AND td.relkind IN ('r','p')
-	) td
-) td
+	) AS td
+) AS td
 WHERE
     tc.table_oid = ANY($1)
     -- Exclude tables owned by extensions

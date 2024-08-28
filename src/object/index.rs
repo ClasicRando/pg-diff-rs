@@ -5,7 +5,10 @@ use sqlx::{query_as, PgPool};
 
 use crate::PgDiffError;
 
-use super::{PgCatalog, compare_option_lists, Dependency, IndexParameters, SchemaQualifiedName, SqlObject, TablespaceCompare};
+use super::{
+    compare_option_lists, Dependency, IndexParameters, OptionListObject, PgCatalog,
+    SchemaQualifiedName, SqlObject, TablespaceCompare,
+};
 
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
     let indexes_query = include_str!("./../../queries/indexes.pgsql");
@@ -42,6 +45,8 @@ impl PartialEq for Index {
     }
 }
 
+impl OptionListObject for Index {}
+
 impl SqlObject for Index {
     fn name(&self) -> &SchemaQualifiedName {
         &self.schema_qualified_name
@@ -73,8 +78,7 @@ impl SqlObject for Index {
             && self.parameters.with != new.parameters.with
         {
             compare_option_lists(
-                "INDEX",
-                &self.schema_qualified_name,
+                self,
                 self.parameters.with.as_deref(),
                 new.parameters.with.as_deref(),
                 w,

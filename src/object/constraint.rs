@@ -1,11 +1,11 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
+use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
-use sqlx::{query_as, PgPool};
 
-use crate::object::{PgCatalog, Dependency, IndexParameters, SchemaQualifiedName, SqlObject};
-use crate::{join_slice, PgDiffError};
+use crate::{PgDiffError, write_join};
+use crate::object::{Dependency, IndexParameters, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_constraints(
     pool: &PgPool,
@@ -40,7 +40,7 @@ pub struct Constraint {
     #[sqlx(json)]
     pub(crate) timing: ConstraintTiming,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>
+    pub(crate) dependencies: Vec<Dependency>,
 }
 
 impl SqlObject for Constraint {
@@ -89,7 +89,7 @@ impl SqlObject for Constraint {
                     self.name,
                     if *are_nulls_distinct { "" } else { " NOT" },
                 )?;
-                join_slice(columns, ",", w)?;
+                write_join!(w, columns.iter(), ",");
                 write!(w, "){index_parameters}")?;
             }
             ConstraintType::PrimaryKey {
@@ -101,7 +101,7 @@ impl SqlObject for Constraint {
                     "ALTER TABLE {} ADD CONSTRAINT {}\nPRIMARY KEY (",
                     self.owner_table_name, self.name,
                 )?;
-                join_slice(columns, ",", w)?;
+                write_join!(w, columns.iter(), ",");
                 write!(w, "){index_parameters}")?;
             }
             ConstraintType::ForeignKey {
@@ -117,9 +117,9 @@ impl SqlObject for Constraint {
                     "ALTER TABLE {} ADD CONSTRAINT {}\nFOREIGN KEY (",
                     self.owner_table_name, self.name,
                 )?;
-                join_slice(columns, ",", w)?;
+                write_join!(w, columns.iter(), ",");
                 write!(w, ") REFERENCES {ref_table}(")?;
-                join_slice(ref_columns, ",", w)?;
+                write_join!(w, ref_columns.iter(), ",");
                 write!(
                     w,
                     ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update}",
@@ -255,7 +255,7 @@ impl Display for ForeignKeyAction {
             ForeignKeyAction::SetNull { columns } => {
                 if let Some(columns) = columns {
                     write!(f, "SET NULL (")?;
-                    join_slice(columns, ",", f)?;
+                    write_join!(f, columns.iter(), ",");
                     write!(f, ")")
                 } else {
                     write!(f, "SET NULL")
@@ -264,7 +264,7 @@ impl Display for ForeignKeyAction {
             ForeignKeyAction::SetDefault { columns } => {
                 if let Some(columns) = columns {
                     write!(f, "SET DEFAULT (")?;
-                    join_slice(columns, ",", f)?;
+                    write_join!(f, columns.iter(), ",");
                     write!(f, ")")
                 } else {
                     write!(f, "SET DEFAULT")
