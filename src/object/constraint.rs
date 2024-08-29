@@ -1,11 +1,11 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
+use sqlx::{query_as, PgPool};
 
-use crate::{PgDiffError, write_join};
 use crate::object::{Dependency, IndexParameters, PgCatalog, SchemaQualifiedName, SqlObject};
+use crate::{write_join, PgDiffError};
 
 pub async fn get_constraints(
     pool: &PgPool,

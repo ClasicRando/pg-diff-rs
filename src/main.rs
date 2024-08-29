@@ -1,15 +1,17 @@
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
-use sqlx::PgPool;
+use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgConnectOptions;
+use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
 use crate::object::{
-    append_create_statements_to_owner_table_file, get_database, SchemaQualifiedName,
-    write_create_statements_to_file,
+    append_create_statements_to_owner_table_file, get_database, write_create_statements_to_file,
+    SchemaQualifiedName,
 };
 
 mod object;
@@ -211,8 +213,21 @@ async fn main() -> Result<(), PgDiffError> {
                     write_create_statements_to_file(sequence, &output_path).await?;
                 }
             }
-            for function in &mut database.functions {
-                function.extract_more_dependencies(&pool).await?;
+
+            let functions: HashMap<SchemaQualifiedName, Oid> = database
+                .functions
+                .iter()
+                .map(|f| (f.name.clone(), f.oid))
+                .collect();
+            let tables: HashMap<SchemaQualifiedName, Oid> = database
+                .tables
+                .iter()
+                .map(|f| (f.name.clone(), f.oid))
+                .collect();
+            for function in database.functions.iter_mut() {
+                function
+                    .extract_more_dependencies(&tables, &functions)
+                    .await?;
                 write_create_statements_to_file(function, &output_path).await?;
             }
             for view in &database.views {

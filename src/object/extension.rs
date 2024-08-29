@@ -5,7 +5,7 @@ use sqlx::{query_as, PgPool};
 
 use crate::PgDiffError;
 
-use super::{PgCatalog, Dependency, SchemaQualifiedName, SqlObject};
+use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 
 pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
     let extensions_query = include_str!("./../../queries/extensions.pgsql");

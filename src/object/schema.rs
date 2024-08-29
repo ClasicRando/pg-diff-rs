@@ -1,8 +1,8 @@
 use std::fmt::Write;
 
+use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgRow;
 use sqlx::{query_as, FromRow, PgPool, Row};
-use sqlx::postgres::types::Oid;
 
 use crate::PgDiffError;
 
@@ -58,7 +58,7 @@ impl SqlObject for Schema {
             catalog: PgCatalog::Namespace,
         }
     }
-    
+
     fn dependencies(&self) -> &[Dependency] {
         &[]
     }

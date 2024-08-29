@@ -1,13 +1,16 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Write};
+use std::str::FromStr;
 
 use lazy_regex::regex;
-use sqlx::{Decode, PgPool, Postgres, query_as};
 use sqlx::error::BoxDynError;
-use sqlx::postgres::{PgTypeInfo, PgValueRef};
 use sqlx::postgres::types::Oid;
+use sqlx::postgres::{PgTypeInfo, PgValueRef};
+use sqlx::{query_as, Decode, PgPool, Postgres};
 
-use crate::{PgDiffError, write_join};
+use crate::object::plpgsql::PlPgSqlFunction;
+use crate::{write_join, PgDiffError};
 
 use super::{
     compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject,
@@ -117,7 +120,11 @@ pub struct Function {
 }
 
 impl Function {
-    pub async fn extract_more_dependencies(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
+    pub async fn extract_more_dependencies(
+        &mut self,
+        tables: &HashMap<SchemaQualifiedName, Oid>,
+        functions: &HashMap<SchemaQualifiedName, Oid>,
+    ) -> Result<(), PgDiffError> {
         if self.is_pre_parsed || self.language == "c" {
             return Ok(());
         }
@@ -129,8 +136,42 @@ impl Function {
                         object_name: self.name.clone(),
                         error: e,
                     })?;
-                println!("{:?}", result.protobuf);
-                println!("{:?}", result.tables());
+                for table in result.tables() {
+                    let table_name = SchemaQualifiedName::from_str(&table)?;
+                    match tables.get(&table_name) {
+                        Some(table_oid) => {
+                            println!(
+                                "Adding table {table_name} as dependency to function {}",
+                                self.name
+                            );
+                            self.dependencies.push(Dependency {
+                                oid: *table_oid,
+                                catalog: PgCatalog::Class,
+                            })
+                        }
+                        None => {
+                            println!("Could not find table {table_name} referenced in {} within the scraped database tables. Ignoring for the time being.", self.name)
+                        }
+                    }
+                }
+                for function in result.functions() {
+                    let function_name = SchemaQualifiedName::from_str(&function)?;
+                    match functions.get(&function_name) {
+                        Some(function_oid) => {
+                            println!(
+                                "Adding function {function_name} as dependency to function {}",
+                                self.name
+                            );
+                            self.dependencies.push(Dependency {
+                                oid: *function_oid,
+                                catalog: PgCatalog::Proc,
+                            })
+                        }
+                        None => {
+                            println!("Could not find function {function_name} referenced in {} within the scraped database function. Ignoring for the time being.", self.name)
+                        }
+                    }
+                }
             }
             "plpgsql" => {
                 let mut block = String::new();
@@ -142,7 +183,15 @@ impl Function {
                         return Ok(());
                     }
                 };
-                println!("{}\n", result);
+                let result: Vec<PlPgSqlFunction> = match serde_json::from_value(result.clone()) {
+                    Ok(inner) => inner,
+                    Err(error) => {
+                        println!("{result}");
+                        println!("plpg/sql ast cannot be parsed for {}. {error}\n", self.name);
+                        return Ok(());
+                    }
+                };
+                println!("{:?}\n", result);
             }
             _ => {
                 return Err(PgDiffError::General(format!(

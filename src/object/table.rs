@@ -1,18 +1,18 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{FromRow, PgPool, query_as, Row};
-use sqlx::postgres::PgRow;
 use sqlx::postgres::types::Oid;
+use sqlx::postgres::PgRow;
 use sqlx::types::Json;
+use sqlx::{query_as, FromRow, PgPool, Row};
 
-use crate::{map_join_slice, PgDiffError, write_join};
+use crate::{map_join_slice, write_join, PgDiffError};
 
+use super::sequence::SequenceOptions;
 use super::{
-    Collation, compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName,
+    compare_option_lists, Collation, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName,
     SqlObject, StorageParameter, TableSpace, TablespaceCompare,
 };
-use super::sequence::SequenceOptions;
 
 pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, PgDiffError> {
     let tables_query = include_str!("./../../queries/tables.pgsql");

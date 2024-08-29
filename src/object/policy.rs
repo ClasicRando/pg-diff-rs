@@ -57,7 +57,7 @@ impl SqlObject for Policy {
     fn dependencies(&self) -> &[Dependency] {
         &self.dependencies
     }
-    
+
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(
             w,

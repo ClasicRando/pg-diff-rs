@@ -1,15 +1,17 @@
+use std::convert::Infallible;
 use std::fmt::{Display, Formatter, Write};
 use std::path::Path;
+use std::str::FromStr;
 
 use serde::Deserialize;
-use sqlx::PgPool;
 use sqlx::postgres::types::Oid;
+use sqlx::PgPool;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
-pub use constraint::{Constraint, get_constraints};
-pub use extension::{Extension, get_extensions};
-pub use function::{Function, get_functions};
+pub use constraint::{get_constraints, Constraint};
+pub use extension::{get_extensions, Extension};
+pub use function::{get_functions, Function};
 pub use index::{get_indexes, Index};
 pub use schema::{get_schemas, Schema};
 pub use sequence::{get_sequences, Sequence};
@@ -18,13 +20,14 @@ pub use trigger::{get_triggers, Trigger};
 pub use udt::{get_udts, Udt};
 pub use view::{get_views, View};
 
-use crate::{PgDiffError, write_join};
 use crate::object::policy::{get_policies, Policy};
+use crate::{write_join, PgDiffError};
 
 mod constraint;
 mod extension;
 mod function;
 mod index;
+mod plpgsql;
 mod policy;
 mod schema;
 mod sequence;
@@ -32,7 +35,6 @@ mod table;
 mod trigger;
 mod udt;
 mod view;
-mod plpgsql;
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
@@ -99,16 +101,27 @@ pub trait SqlObject: PartialEq {
     }
 }
 
-#[derive(Debug)]
-pub struct CustomType {
-    pub(crate) oid: Oid,
-    pub(crate) name: String,
-}
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Deserialize)]
 pub struct SchemaQualifiedName {
     pub(crate) schema_name: String,
     pub(crate) local_name: String,
+}
+
+impl FromStr for SchemaQualifiedName {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.split_once('.') {
+            Some((schema_name, local_name)) => SchemaQualifiedName {
+                schema_name: schema_name.to_owned(),
+                local_name: local_name.to_owned(),
+            },
+            None => SchemaQualifiedName {
+                schema_name: "public".to_string(),
+                local_name: s.to_owned(),
+            },
+        })
+    }
 }
 
 impl SchemaQualifiedName {

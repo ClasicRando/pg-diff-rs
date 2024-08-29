@@ -1,10 +1,10 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
+use sqlx::{query_as, PgPool};
 
-use crate::{PgDiffError, write_join};
+use crate::{write_join, PgDiffError};
 
 use super::{Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
 

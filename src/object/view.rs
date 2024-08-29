@@ -1,9 +1,9 @@
 use std::fmt::Write;
 
-use sqlx::{PgPool, query_as};
 use sqlx::postgres::types::Oid;
+use sqlx::{query_as, PgPool};
 
-use crate::{PgDiffError, write_join};
+use crate::{write_join, PgDiffError};
 
 use super::{
     compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject,
