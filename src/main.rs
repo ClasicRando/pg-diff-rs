@@ -1,10 +1,8 @@
-use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
-use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
@@ -63,6 +61,22 @@ macro_rules! write_join {
                 $write.write_str($separator)?;
                 write!($write, "{item}")?;
             }
+        };
+    };
+    ($write:ident, $prefix:literal, $items:expr, $separator:literal, $postfix:literal) => {
+        if !$prefix.is_empty() {
+            $write.write_str($prefix);
+        };
+        let mut iter = $items;
+        if let Some(item) = iter.next() {
+            write!($write, "{item}")?;
+            for item in iter {
+                $write.write_str($separator)?;
+                write!($write, "{item}")?;
+            }
+        };
+        if !$postfix.is_empty() {
+            $write.write_str($postfix);
         };
     };
 }
@@ -213,21 +227,8 @@ async fn main() -> Result<(), PgDiffError> {
                     write_create_statements_to_file(sequence, &output_path).await?;
                 }
             }
-
-            let functions: HashMap<SchemaQualifiedName, Oid> = database
-                .functions
-                .iter()
-                .map(|f| (f.name.clone(), f.oid))
-                .collect();
-            let tables: HashMap<SchemaQualifiedName, Oid> = database
-                .tables
-                .iter()
-                .map(|f| (f.name.clone(), f.oid))
-                .collect();
             for function in database.functions.iter_mut() {
-                function
-                    .extract_more_dependencies(&tables, &functions)
-                    .await?;
+                function.extract_more_dependencies(&pool).await?;
                 write_create_statements_to_file(function, &output_path).await?;
             }
             for view in &database.views {

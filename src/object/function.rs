@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Write};
 use std::str::FromStr;
 
@@ -10,11 +9,13 @@ use sqlx::postgres::{PgTypeInfo, PgValueRef};
 use sqlx::{query_as, Decode, PgPool, Postgres};
 
 use crate::object::plpgsql::PlPgSqlFunction;
+use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
-use super::{
-    compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject,
-};
+use super::{compare_option_lists, Dependency, GenericObject, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject};
+
+const PUBLIC_SCHEMA_NAME: &str = "public";
+const PG_CATALOG_SCHEMA_NAME: &str = "pg_catalog";
 
 pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Function>, PgDiffError> {
     let functions_query = include_str!("../../queries/functions.pgsql");
@@ -30,6 +31,51 @@ pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Functi
         }
     };
     Ok(functions)
+}
+
+async fn get_functions_by_qualified_name(
+    pool: &PgPool,
+    schema_qualified_name: &SchemaQualifiedName,
+) -> Result<Vec<GenericObject>, PgDiffError> {
+    let functions_query = include_str!("../../queries/dependency_functions.pgsql");
+    let schema_specified = !schema_qualified_name.schema_name.is_empty();
+    let schemas = if schema_specified {
+        [&schema_qualified_name.schema_name, ""]
+    } else {
+        [PUBLIC_SCHEMA_NAME, PG_CATALOG_SCHEMA_NAME]
+    };
+    let functions = match query_as(functions_query)
+        .bind(schemas)
+        .bind(&schema_qualified_name.local_name)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load functions by qualified name");
+            return Err(error.into());
+        }
+    };
+    Ok(functions)
+}
+
+async fn get_objects_by_qualified_name(
+    pool: &PgPool,
+    schema_qualified_name: &SchemaQualifiedName,
+) -> Result<Vec<GenericObject>, PgDiffError> {
+    let all_objects_query = include_str!("../../queries/all_objects.pgsql");
+    let schema_specified = !schema_qualified_name.schema_name.is_empty();
+    let schemas = if schema_specified {
+        [&schema_qualified_name.schema_name, ""]
+    } else {
+        ["public", "pg_catalog"]
+    };
+    let objects: Vec<GenericObject> = query_as(all_objects_query)
+        .bind(schemas)
+        .bind(&schema_qualified_name.local_name)
+        .fetch_all(pool)
+        .await?;
+    Ok(objects)
 }
 
 pub struct FunctionArgument<'s> {
@@ -89,7 +135,7 @@ impl<'s> Display for FunctionArgument<'s> {
         if !self.default_expression.is_empty() {
             write!(f, " = {}", self.default_expression)?;
         }
-        f.write_char(';')
+        Ok(())
     }
 }
 
@@ -120,11 +166,7 @@ pub struct Function {
 }
 
 impl Function {
-    pub async fn extract_more_dependencies(
-        &mut self,
-        tables: &HashMap<SchemaQualifiedName, Oid>,
-        functions: &HashMap<SchemaQualifiedName, Oid>,
-    ) -> Result<(), PgDiffError> {
+    pub async fn extract_more_dependencies(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
         if self.is_pre_parsed || self.language == "c" {
             return Ok(());
         }
@@ -138,39 +180,13 @@ impl Function {
                     })?;
                 for table in result.tables() {
                     let table_name = SchemaQualifiedName::from_str(&table)?;
-                    match tables.get(&table_name) {
-                        Some(table_oid) => {
-                            println!(
-                                "Adding table {table_name} as dependency to function {}",
-                                self.name
-                            );
-                            self.dependencies.push(Dependency {
-                                oid: *table_oid,
-                                catalog: PgCatalog::Class,
-                            })
-                        }
-                        None => {
-                            println!("Could not find table {table_name} referenced in {} within the scraped database tables. Ignoring for the time being.", self.name)
-                        }
-                    }
+                    let tables = get_table_by_qualified_name(pool, &table_name).await?;
+                    self.add_dependencies_if_match(&table_name, tables);
                 }
                 for function in result.functions() {
                     let function_name = SchemaQualifiedName::from_str(&function)?;
-                    match functions.get(&function_name) {
-                        Some(function_oid) => {
-                            println!(
-                                "Adding function {function_name} as dependency to function {}",
-                                self.name
-                            );
-                            self.dependencies.push(Dependency {
-                                oid: *function_oid,
-                                catalog: PgCatalog::Proc,
-                            })
-                        }
-                        None => {
-                            println!("Could not find function {function_name} referenced in {} within the scraped database function. Ignoring for the time being.", self.name)
-                        }
-                    }
+                    let functions = get_functions_by_qualified_name(pool, &function_name).await?;
+                    self.add_dependencies_if_match(&function_name, functions);
                 }
             }
             "plpgsql" => {
@@ -179,19 +195,30 @@ impl Function {
                 let result = match pg_query::parse_plpgsql(&block) {
                     Ok(inner) => inner,
                     Err(error) => {
-                        println!("Couldn't get dependencies of dynamic function {} due to parsing error. {error}", self.name);
+                        println!("Could not get dependencies of dynamic function {} due to parsing error. {error}", self.name);
                         return Ok(());
                     }
                 };
                 let result: Vec<PlPgSqlFunction> = match serde_json::from_value(result.clone()) {
                     Ok(inner) => inner,
                     Err(error) => {
-                        println!("{result}");
                         println!("plpg/sql ast cannot be parsed for {}. {error}\n", self.name);
                         return Ok(());
                     }
                 };
-                println!("{:?}\n", result);
+                for function in result {
+                    let names = match function.get_objects() {
+                        Ok(inner) => inner,
+                        Err(error) => {
+                            println!("Could not get dependencies of dynamic function {} due to object extraction error. {error}", self.name);
+                            return Ok(());
+                        }
+                    };
+                    for name in names {
+                        let objects = get_objects_by_qualified_name(pool, &name).await?;
+                        self.add_dependencies_if_match(&name, objects);
+                    }
+                }
             }
             _ => {
                 return Err(PgDiffError::General(format!(
@@ -201,6 +228,37 @@ impl Function {
             }
         }
         Ok(())
+    }
+    
+    fn add_dependencies_if_match(&mut self, name: &SchemaQualifiedName, objects: Vec<GenericObject>) {
+        match &objects[..] {
+            [object] => {
+                if object.name.schema_name == PG_CATALOG_SCHEMA_NAME {
+                    return;
+                }
+                println!(
+                    "Adding {} as dependency {:?} for dynamic function {}",
+                    object.name, object.dependency, self.name
+                );
+                self.dependencies.push(object.dependency);
+            }
+            [] => {
+                println!("Could not match object {name} to an object for {}. Skipping for now.", self.name)
+            }
+            objects => {
+                if objects
+                    .iter()
+                    .all(|d| d.name.schema_name == PG_CATALOG_SCHEMA_NAME)
+                {
+                    return;
+                }
+                println!(
+                    "Found multiple matches for {name} to an object for {}. {:?}",
+                    self.name,
+                    objects.iter().map(|o| o.name.clone()).collect::<Vec<_>>()
+                );
+            }
+        }
     }
 
     fn rewrite_arguments<W>(&self, w: &mut W) -> Result<(), PgDiffError>
@@ -219,7 +277,10 @@ impl Function {
         let declare_regex = regex!("^declare"i);
         let arguments = FunctionArgument::from_arg_list(&self.arguments);
         w.write_str("DECLARE\n\t")?;
-        write_join!(w, arguments.iter(), "\n\t");
+        write_join!(w, arguments.iter(), ";\n\t");
+        if !arguments.is_empty() {
+            w.write_char(';')?;
+        }
         let existing_block =
             arguments
                 .iter()
@@ -249,9 +310,9 @@ impl Function {
         )?;
 
         if rewrite_code {
-            w.write_str(&self.arguments)?;
-        } else {
             self.rewrite_arguments(w)?;
+        } else {
+            w.write_str(&self.arguments)?;
         }
         w.write_str(")\n")?;
 

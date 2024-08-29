@@ -1,4 +1,38 @@
+use lazy_regex::regex;
+use std::str::FromStr;
+
 use serde::Deserialize;
+
+use crate::object::SchemaQualifiedName;
+use crate::PgDiffError;
+
+trait ObjectNode {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError>;
+}
+
+impl<O> ObjectNode for Vec<O>
+where
+    O: ObjectNode,
+{
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        for node in self.iter() {
+            node.extract_objects(buffer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<O> ObjectNode for Option<O>
+where
+    O: ObjectNode,
+{
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        if let Some(node) = self {
+            return node.extract_objects(buffer);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub enum PlPgSqlType {
@@ -53,6 +87,23 @@ pub enum PlPgSqlVariable {
     // Promise,
 }
 
+impl ObjectNode for PlPgSqlVariable {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlVariable::Var {
+            data_type,
+            default_value,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        default_value.extract_objects(buffer)?;
+        let PlPgSqlType::Inner { type_name } = data_type;
+        buffer.push(SchemaQualifiedName::from_str(type_name)?);
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub enum PlPgSqlExpr {
     #[serde(rename = "PLpgSQL_expr")]
@@ -61,6 +112,38 @@ pub enum PlPgSqlExpr {
         parse_mode: i32,
         query: String,
     },
+}
+
+impl ObjectNode for PlPgSqlExpr {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlExpr::Inner { query, .. } = self;
+        let query = query.trim();
+        let dml_query_regex = regex!("^select|insert|update|delete|truncate"i);
+        let query = if dml_query_regex.is_match(query) {
+            query.to_string()
+        } else {
+            match query.split_once(":=") {
+                Some((_, assign_value)) => format!("select {assign_value}"),
+                None => format!("select {query}"),
+            }
+        };
+        let parse_result = match pg_query::parse(&query) {
+            Ok(inner) => inner,
+            Err(error) => {
+                return Err(PgDiffError::PgQuery {
+                    object_name: SchemaQualifiedName::from_str("plpgsql_block")?,
+                    error,
+                })
+            }
+        };
+        for table in parse_result.tables() {
+            buffer.push(SchemaQualifiedName::from_str(&table)?);
+        }
+        for function in parse_result.functions() {
+            buffer.push(SchemaQualifiedName::from_str(&function)?);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +159,19 @@ pub enum PlPgSqlElsIf {
     },
 }
 
+impl ObjectNode for PlPgSqlElsIf {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlElsIf::Inner {
+            condition,
+            statements,
+            ..
+        } = self;
+        condition.extract_objects(buffer)?;
+        statements.extract_objects(buffer)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlPgSqlCaseWhen {
     #[serde(rename = "lineno")]
@@ -84,6 +180,14 @@ pub struct PlPgSqlCaseWhen {
     expression: PlPgSqlExpr,
     #[serde(rename = "stmts")]
     statements: Vec<PlPgSqlStatement>,
+}
+
+impl ObjectNode for PlPgSqlCaseWhen {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        self.expression.extract_objects(buffer)?;
+        self.statements.extract_objects(buffer)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +205,24 @@ pub enum PlPgSqlOpenCursor {
         #[serde(rename = "argquery")]
         query_args: PlPgSqlExpr,
     },
+}
+
+impl ObjectNode for PlPgSqlOpenCursor {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        match self {
+            PlPgSqlOpenCursor::Query { query } => {
+                query.extract_objects(buffer)?;
+            }
+            PlPgSqlOpenCursor::Execute { dyn_query, params } => {
+                dyn_query.extract_objects(buffer)?;
+                params.extract_objects(buffer)?;
+            }
+            PlPgSqlOpenCursor::Args { query_args } => {
+                query_args.extract_objects(buffer)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +251,14 @@ pub enum PlPgSqlException {
         conditions: Vec<PlPgSqlExceptionCondition>,
         action: Vec<PlPgSqlStatement>,
     },
+}
+
+impl ObjectNode for PlPgSqlException {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlException::Inner { action, .. } = self;
+        action.extract_objects(buffer)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,7 +294,10 @@ pub enum PlPgSqlDiagnoticsKind {
 #[derive(Debug, Deserialize)]
 pub enum PlPgSqlDiagnosticsItem {
     #[serde(rename = "PLpgSQL_diag_item")]
-    Inner {},
+    Inner {
+        kind: PlPgSqlDiagnoticsKind,
+        target: u32,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +311,14 @@ pub enum PlPgSqlExceptionBlock {
         #[serde(rename = "exc_list", default)]
         exceptions: Option<Vec<PlPgSqlException>>,
     },
+}
+
+impl ObjectNode for PlPgSqlExceptionBlock {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlExceptionBlock::Inner { exceptions, .. } = self;
+        exceptions.extract_objects(buffer)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,7 +489,7 @@ pub enum PlPgSqlStatement {
         #[serde(default)]
         message: Option<String>,
         #[serde(default)]
-        params: Option<Vec<String>>,
+        params: Option<Vec<PlPgSqlExpr>>,
         #[serde(default)]
         options: Option<Vec<PlPgSqlRaiseOption>>,
     },
@@ -483,6 +624,14 @@ pub enum PlPgSqlRaiseOption {
     },
 }
 
+impl ObjectNode for PlPgSqlRaiseOption {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        let PlPgSqlRaiseOption::Inner { expression, .. } = self;
+        expression.extract_objects(buffer)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub enum PlPgSqlRaiseOptionType {
     #[serde(rename = "PLPGSQL_RAISEOPTION_ERRCODE")]
@@ -505,6 +654,170 @@ pub enum PlPgSqlRaiseOptionType {
     Schema,
 }
 
+impl ObjectNode for PlPgSqlStatement {
+    fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError> {
+        match self {
+            PlPgSqlStatement::Block {
+                body, exceptions, ..
+            } => {
+                body.extract_objects(buffer)?;
+                exceptions.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Assign { expression, .. } => {
+                expression.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::If {
+                condition,
+                then_body,
+                elsif_body,
+                else_body,
+                ..
+            } => {
+                condition.extract_objects(buffer)?;
+                then_body.extract_objects(buffer)?;
+                elsif_body.extract_objects(buffer)?;
+                else_body.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Case {
+                test_expression,
+                whens,
+                else_statements,
+                ..
+            } => {
+                test_expression.extract_objects(buffer)?;
+                whens.extract_objects(buffer)?;
+                else_statements.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Loop { body, .. } => {
+                body.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::While { body, .. } => {
+                body.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ForI {
+                var,
+                lower,
+                upper,
+                step,
+                body,
+                ..
+            } => {
+                var.extract_objects(buffer)?;
+                lower.extract_objects(buffer)?;
+                upper.extract_objects(buffer)?;
+                step.extract_objects(buffer)?;
+                body.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ForS {
+                var, body, query, ..
+            } => {
+                var.extract_objects(buffer)?;
+                body.extract_objects(buffer)?;
+                query.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ForC {
+                var,
+                body,
+                query_args,
+                ..
+            } => {
+                var.extract_objects(buffer)?;
+                body.extract_objects(buffer)?;
+                query_args.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Foreach {
+                expression, body, ..
+            } => {
+                expression.extract_objects(buffer)?;
+                body.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ExitOrContinue { condition, .. } => {
+                condition.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Return { expression, .. } => {
+                expression.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ReturnNext { expression, .. } => {
+                expression.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ReturnQuery {
+                query,
+                dynamic_query,
+                params,
+                ..
+            } => {
+                query.extract_objects(buffer)?;
+                dynamic_query.extract_objects(buffer)?;
+                params.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Raise {
+                params, options, ..
+            } => {
+                params.extract_objects(buffer)?;
+                options.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Assert { condition, .. } => {
+                condition.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::ExecSql {
+                sql_statement,
+                target,
+                ..
+            } => {
+                sql_statement.extract_objects(buffer)?;
+                target.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::DynExecute {
+                query,
+                target,
+                params,
+                ..
+            } => {
+                query.extract_objects(buffer)?;
+                target.extract_objects(buffer)?;
+                params.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::DynForS {
+                loop_variable,
+                body,
+                query,
+                params,
+                ..
+            } => {
+                loop_variable.extract_objects(buffer)?;
+                body.extract_objects(buffer)?;
+                query.extract_objects(buffer)?;
+                params.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::GetDiagnostics { .. } => {}
+            PlPgSqlStatement::Open { query, .. } => {
+                query.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Fetch {
+                target,
+                fetch_count_expr,
+                ..
+            } => {
+                target.extract_objects(buffer)?;
+                fetch_count_expr.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Close { .. } => {}
+            PlPgSqlStatement::Perform { expression, .. } => {
+                expression.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Call {
+                expression, target, ..
+            } => {
+                expression.extract_objects(buffer)?;
+                target.extract_objects(buffer)?;
+            }
+            PlPgSqlStatement::Commit { .. } => {}
+            PlPgSqlStatement::Rollback { .. } => {}
+        }
+        Ok(())
+    }
+}
+
 // #[derive(Debug, Deserialize)]
 // pub struct PlPgSqlStatement(PlPgSqlStatementType);
 
@@ -520,4 +833,29 @@ pub enum PlPgSqlFunction {
         datums: Vec<PlPgSqlVariable>,
         action: PlPgSqlStatement,
     },
+}
+
+impl PlPgSqlFunction {
+    pub fn get_types(&self) -> Vec<&str> {
+        let PlPgSqlFunction::Inner { datums, .. } = self;
+        datums
+            .iter()
+            .filter_map(|v| {
+                if let PlPgSqlVariable::Var { data_type, .. } = v {
+                    match data_type {
+                        PlPgSqlType::Inner { type_name } => Some(type_name.as_str()),
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn get_objects(&self) -> Result<Vec<SchemaQualifiedName>, PgDiffError> {
+        let PlPgSqlFunction::Inner { action, .. } = self;
+        let mut result = Vec::new();
+        action.extract_objects(&mut result)?;
+        Ok(result)
+    }
 }

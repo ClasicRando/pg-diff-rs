@@ -32,7 +32,11 @@ WITH custom_types AS (
 				AND a.attrelid = vc.oid
 		) AS "columns",
 		pg_get_viewdef(vc.oid) AS "query",
-		vc.reloptions AS "options"
+		vc.reloptions AS "options",
+		ARRAY[JSON_OBJECT(
+            'oid': CAST(vn.oid AS INTEGER),
+            'catalog': 'pg_namespace'
+        )] AS "dependencies"
 	FROM pg_catalog.pg_class AS vc
 	JOIN pg_catalog.pg_namespace AS vn
 		ON vc.relnamespace = vn.oid
@@ -50,7 +54,7 @@ WITH custom_types AS (
 )
 SELECT
 	v.oid, v.name, v.columns, v.query, v.options,
-	TO_JSONB(COALESCE(cd.dependencies || tyd.dependencies, '{}')) AS "dependencies"
+	TO_JSONB(v.dependencies || cd.dependencies || tyd.dependencies) AS "dependencies"
 FROM pg_catalog.pg_rewrite AS r
 JOIN query_views AS v
 	ON r.ev_class = v.oid

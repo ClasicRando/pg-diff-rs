@@ -80,12 +80,19 @@ SELECT
 	pp.partitioned_parent_table,
     tts.spcname AS "tablespace",
     t.reloptions AS "with",
-    TO_JSONB('{}'::json[]) AS "dependencies"
+    TO_JSONB(nd.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"
 FROM pg_catalog.pg_class AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.relnamespace = tn.oid
 LEFT JOIN pg_catalog.pg_tablespace tts
 	ON t.reltablespace = tts.oid
+CROSS JOIN LATERAL (
+    SELECT
+        ARRAY[JSON_OBJECT(
+            'oid': CAST(tn.oid AS INTEGER),
+            'catalog': 'pg_namespace'
+        )] AS "dependencies"
+) AS nd
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
@@ -118,6 +125,58 @@ LEFT JOIN LATERAL (
 ) AS pp ON true
 JOIN table_columns AS c
     ON c.attrelid = t.oid
+CROSS JOIN LATERAL (
+	SELECT
+	    ARRAY_AGG(JSON_OBJECT(
+            'catalog': 'pg_class',
+            'oid': CAST(td.oid AS integer)
+        )) AS "dependencies"
+	FROM (
+		SELECT DISTINCT td.oid
+		FROM pg_catalog.pg_depend AS d
+		JOIN pg_catalog.pg_class AS td
+			ON d.refclassid = 'pg_class'::REGCLASS
+			AND d.refobjid = td.oid
+		WHERE
+            d.classid = 'pg_class'::REGCLASS
+            AND d.objid = t.oid
+			AND d.deptype = 'n'
+			AND td.relkind IN ('r','p')
+	) AS td
+) AS td
+CROSS JOIN LATERAL (
+    SELECT
+        ARRAY_AGG(JSON_OBJECT(
+            'catalog': 'pg_type',
+            'oid': CAST(tyd.oid AS integer)
+        )) AS "dependencies"
+    FROM (
+        SELECT DISTINCT tyd.oid
+        FROM pg_catalog.pg_depend AS d
+        JOIN pg_catalog.pg_type AS tyd
+            ON d.refclassid = 'pg_type'::REGCLASS
+            AND d.refobjid = tyd.oid
+        WHERE
+            d.classid = 'pg_class'::REGCLASS
+            AND d.objid = t.oid
+            AND d.deptype = 'n'
+            AND
+            (
+                tyd.typtype IN ('e','r')
+                OR
+                (
+                    tyd.typtype = 'c'
+                    AND EXISTS(
+                        SELECT NULL
+                        FROM pg_catalog.pg_class tc
+                        WHERE
+                            tc.oid = tyd.typrelid
+                            AND tc.relkind = 'c'
+                    )
+                )
+            )
+    ) AS tyd
+) AS tyd
 WHERE
     tn.nspname = ANY($1)
 	AND t.relkind IN ('r','p')

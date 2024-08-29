@@ -117,7 +117,7 @@ impl FromStr for SchemaQualifiedName {
                 local_name: local_name.to_owned(),
             },
             None => SchemaQualifiedName {
-                schema_name: "public".to_string(),
+                schema_name: "".to_string(),
                 local_name: s.to_owned(),
             },
         })
@@ -330,6 +330,7 @@ where
 {
     let mut statements = String::new();
     object.create_statements(&mut statements)?;
+    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
 
     let path = root_directory
         .as_ref()
@@ -351,6 +352,7 @@ where
 {
     let mut statements = String::new();
     object.create_statements(&mut statements)?;
+    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
 
     let path = root_directory.as_ref().join("table");
     tokio::fs::create_dir_all(&path).await?;
@@ -363,7 +365,7 @@ where
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, Copy, Clone)]
 pub enum PgCatalog {
     #[serde(rename = "pg_namespace")]
     Namespace,
@@ -383,8 +385,16 @@ pub enum PgCatalog {
     Extension,
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, Copy, Clone)]
 pub struct Dependency {
     oid: Oid,
     catalog: PgCatalog,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GenericObject {
+    #[sqlx(json)]
+    name: SchemaQualifiedName,
+    #[sqlx(json)]
+    dependency: Dependency,
 }

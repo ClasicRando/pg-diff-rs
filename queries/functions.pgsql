@@ -27,18 +27,25 @@ SELECT
 	END AS "parallel",
 	CASE
 		WHEN pl.lanname = 'sql' AND p.prosqlbody IS NOT NULL THEN pg_catalog.pg_get_function_sqlbody(p.oid)
-		WHEN pl.lanname IN ('sql','plpgsql','c') THEN prosrc
+		WHEN pl.lanname IN ('sql','plpgsql','c','internal') THEN prosrc
 		ELSE NULL
 	END AS "source",
 	p.probin AS bin_info,
 	p.proconfig AS config,
 	p.prosqlbody IS NOT NULL AS is_pre_parsed,
-	TO_JSONB(COALESCE(pd.dependencies || td.dependencies || tyd.dependencies, '{}')) AS "dependencies"
+	TO_JSONB(nd.dependencies || pd.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"
 FROM pg_catalog.pg_proc AS p
 JOIN pg_catalog.pg_namespace AS pn
     ON p.pronamespace = pn.oid
 JOIN pg_catalog.pg_language AS pl
     ON p.prolang = pl.oid
+CROSS JOIN LATERAL (
+    SELECT
+        ARRAY[JSON_OBJECT(
+            'oid': CAST(pn.oid AS INTEGER),
+            'catalog': 'pg_namespace'
+        )] AS "dependencies"
+) AS nd
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(

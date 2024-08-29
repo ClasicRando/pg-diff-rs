@@ -9,10 +9,7 @@ use sqlx::{query_as, FromRow, PgPool, Row};
 use crate::{map_join_slice, write_join, PgDiffError};
 
 use super::sequence::SequenceOptions;
-use super::{
-    compare_option_lists, Collation, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName,
-    SqlObject, StorageParameter, TableSpace, TablespaceCompare,
-};
+use super::{compare_option_lists, Collation, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject, StorageParameter, TableSpace, TablespaceCompare, GenericObject};
 
 pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, PgDiffError> {
     let tables_query = include_str!("./../../queries/tables.pgsql");
@@ -20,6 +17,27 @@ pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, P
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load tables");
+            return Err(error.into());
+        }
+    };
+    Ok(tables)
+}
+
+pub async fn get_table_by_qualified_name(
+    pool: &PgPool,
+    schema_qualified_name: &SchemaQualifiedName,
+) -> Result<Vec<GenericObject>, PgDiffError> {
+    let tables_query = include_str!("./../../queries/dependency_tables.pgsql");
+    let schema_specified = !schema_qualified_name.schema_name.is_empty();
+    let schemas = if schema_specified {
+        [&schema_qualified_name.schema_name, ""]
+    } else {
+        ["public", "pg_catalog"]
+    };
+    let tables = match query_as(tables_query).bind(schemas).bind(&schema_qualified_name.local_name).fetch_all(pool).await {
+        Ok(inner) => inner,
+        Err(error) => {
+            println!("Could not load tables by qualified name");
             return Err(error.into());
         }
     };

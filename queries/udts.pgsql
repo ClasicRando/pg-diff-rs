@@ -1,5 +1,14 @@
 WITH custom_types AS (
-    SELECT ct.oid, ct.typtype, ct.typname, ct.typrelid, ct.typnamespace
+    SELECT
+        ct.oid,
+        ct.typtype,
+        ct.typname,
+        ct.typrelid,
+        ct.typnamespace,
+		ARRAY[JSON_OBJECT(
+            'oid': CAST(ct.typnamespace AS INTEGER),
+            'catalog': 'pg_namespace'
+        )] AS "dependencies"
     FROM pg_catalog.pg_type AS ct
     WHERE
         ct.typtype IN ('e','r')
@@ -65,7 +74,7 @@ SELECT
             )
         )
     END) AS "udt_type",
-    TO_JSONB(COALESCE(td.dependencies || tyd.dependencies, '{}')) AS "dependencies"
+    TO_JSONB(t.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"
 FROM custom_types AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.typnamespace = tn.oid
