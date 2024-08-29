@@ -15,14 +15,20 @@ SELECT
     JSON_OBJECT(
         'schema_name': quote_ident(tn.nspname),
         'local_name': quote_ident(t.relname)
-    ) AS owner_table,
+    ) AS owner_table_name,
     pol.polpermissive AS is_permissive,
     (
         SELECT ARRAY_AGG(rolname)
         FROM roles AS r
         WHERE r.oid = ANY(pol.polroles)
     ) AS applies_to,
-    pol.polcmd AS command,
+    CASE pol.polcmd
+        WHEN 'r' THEN 'Select'
+        WHEN 'a' THEN 'Insert'
+        WHEN 'w' THEN 'Update'
+        WHEN 'd' THEN 'Delete'
+        WHEN '*' THEN 'All'
+    END AS command,
     pg_catalog.pg_get_expr(
         pol.polwithcheck,
         pol.polrelid
@@ -31,25 +37,26 @@ SELECT
         pol.polqual,
         pol.polrelid
     ) AS using_expression,
-    (
-        SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
-        FROM pg_catalog.pg_attribute AS a
-        INNER JOIN pg_catalog.pg_depend AS d
-            ON a.attnum = d.refobjsubid
-        WHERE
-            d.objid = pol.oid
-            AND d.refobjid = t.oid
-            AND d.refclassid = 'pg_class'::REGCLASS
-            AND a.attrelid = t.oid
-            AND NOT a.attisdropped
-            AND a.attnum > 0
-    ) AS "columns",
-    TO_JSONB(td.dependencies || pd.dependencies || tyd.dependencies) AS "dependencies"
+    COALESCE(c.columns, '{}') AS "columns",
+    TO_JSONB(COALESCE(td.dependencies || pd.dependencies || tyd.dependencies, '{}')) AS "dependencies"
 FROM pg_catalog.pg_policy AS pol
 JOIN pg_catalog.pg_class AS t
     ON pol.polrelid = t.oid
 JOIN pg_catalog.pg_namespace AS tn
     ON t.relnamespace = tn.oid
+CROSS JOIN LATERAL (
+   SELECT ARRAY_AGG(a.attname ORDER BY a.attnum) AS "columns"
+   FROM pg_catalog.pg_attribute AS a
+   INNER JOIN pg_catalog.pg_depend AS d
+       ON a.attnum = d.refobjsubid
+   WHERE
+       d.objid = pol.oid
+       AND d.refobjid = t.oid
+       AND d.refclassid = 'pg_class'::REGCLASS
+       AND a.attrelid = t.oid
+       AND NOT a.attisdropped
+       AND a.attnum > 0
+) AS c
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(

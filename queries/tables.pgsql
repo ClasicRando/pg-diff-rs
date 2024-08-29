@@ -79,7 +79,8 @@ SELECT
 	TO_JSONB(pi.inherited_tables) AS "inherited_tables",
 	pp.partitioned_parent_table,
     tts.spcname AS "tablespace",
-    t.reloptions AS "with"
+    t.reloptions AS "with",
+    TO_JSONB('{}'::json[]) AS "dependencies"
 FROM pg_catalog.pg_class AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.relnamespace = tn.oid
@@ -100,7 +101,7 @@ CROSS JOIN LATERAL (
         pt.relkind != 'p'
         AND t.oid = p.inhrelid
 ) AS pi
-CROSS JOIN LATERAL (
+LEFT JOIN LATERAL (
     SELECT
         JSON_OBJECT(
             'schema_name': quote_ident(pn.nspname),
@@ -114,7 +115,7 @@ CROSS JOIN LATERAL (
     WHERE
         pt.relkind = 'p'
         AND t.oid = p.inhrelid
-) AS pp
+) AS pp ON true
 JOIN table_columns AS c
     ON c.attrelid = t.oid
 WHERE

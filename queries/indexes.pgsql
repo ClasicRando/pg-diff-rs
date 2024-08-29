@@ -59,10 +59,10 @@ SELECT
     ti.include,
     ti.with,
     ti.tablespace,
-    TO_JSONB(JSON_OBJECT(
+    TO_JSONB(ARRAY[JSON_OBJECT(
         'oid': CAST(ti.table_oid AS integer),
         'catalog': 'pg_class'
-    )) AS "dependencies"
+    )]) AS "dependencies"
 FROM table_indexes AS ti
 WHERE
     ti.table_oid = ANY($1)
