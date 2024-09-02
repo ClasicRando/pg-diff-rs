@@ -2,6 +2,8 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
 use std::path::Path;
 
+use async_walkdir::WalkDir;
+use futures::stream::StreamExt;
 use pg_query::protobuf::{node::Node, ConstrType, RangeVar, SetOperation};
 use sqlx::postgres::types::Oid;
 use sqlx::PgPool;
@@ -28,7 +30,7 @@ const BUILT_IN_NAMES: &[&str] = &[
     "char",
     "uuid",
     "array_length",
-    "date"
+    "date",
 ];
 
 struct NodeIter<'n> {
@@ -365,14 +367,14 @@ impl DdlStatement {
 }
 
 #[derive(Debug)]
-pub struct DatabaseBuilder {
+pub struct SourceControlDatabase {
     statements: Vec<DdlStatement>,
     non_ddl_statements: Vec<String>,
     unresolved_objects: HashSet<SchemaQualifiedName>,
 }
 
-impl DatabaseBuilder {
-    pub fn new() -> Self {
+impl SourceControlDatabase {
+    fn new() -> Self {
         Self {
             statements: vec![],
             non_ddl_statements: vec![],
@@ -380,7 +382,31 @@ impl DatabaseBuilder {
         }
     }
 
-    pub async fn append_source_file<P>(&mut self, path: P) -> Result<(), PgDiffError>
+    pub async fn from_directory<P>(files_path: P) -> Result<Self, PgDiffError>
+    where
+        P: AsRef<Path>,
+    {
+        let mut builder = SourceControlDatabase::new();
+        let mut entries = WalkDir::new(files_path).map(|entry| entry.map(|e| e.path()));
+        while let Some(result) = entries.next().await {
+            let path = result?;
+            if path.is_dir() {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+                println!("Skipping {:?}", path);
+                continue;
+            };
+            if !file_name.ends_with(".pgsql") && !file_name.ends_with(".sql") {
+                println!("Skipping {:?}", file_name);
+                continue;
+            }
+            builder.append_source_file(path).await?;
+        }
+        Ok(builder)
+    }
+
+    async fn append_source_file<P>(&mut self, path: P) -> Result<(), PgDiffError>
     where
         P: AsRef<Path>,
     {
@@ -423,19 +449,21 @@ impl DatabaseBuilder {
                         &alter_table.relation,
                         "Could not extract a table name from from an ALTER TABLE statement".into(),
                     )?;
-                    let constraint_names = alter_table.cmds
+                    let constraint_names = alter_table
+                        .cmds
                         .iter()
                         .filter_map(|n| n.node.as_ref())
                         .filter_map(|n| match n {
-                            Node::Constraint(constraint) => {
-                                Some(constraint.conname.as_str())
-                            }
-                            _ => None
+                            Node::Constraint(constraint) => Some(constraint.conname.as_str()),
+                            _ => None,
                         })
                         .collect::<Vec<&str>>()
                         .join(",");
-                    
-                    SchemaQualifiedName::new(&relation.schemaname, &format!("{}.({})", relation.relname, constraint_names))
+
+                    SchemaQualifiedName::new(
+                        &relation.schemaname,
+                        &format!("{}.({})", relation.relname, constraint_names),
+                    )
                 }
                 Node::CreateSchemaStmt(create_schema) => {
                     SchemaQualifiedName::from_schema_name(&create_schema.schemaname)
@@ -541,10 +569,10 @@ impl DatabaseBuilder {
                 statement.add_dependency(item.clone());
                 self.unresolved_objects.insert(item);
             }
-            
+
             self.statements.push(statement);
         }
-        
+
         for statement in &self.statements {
             self.unresolved_objects.remove(&statement.object);
         }
@@ -566,7 +594,7 @@ fn extract_names(name_nodes: &[pg_query::protobuf::Node]) -> Option<SchemaQualif
         [local_name] => {
             let local_name = extract_string(local_name)?;
             if BUILT_IN_NAMES.contains(&local_name.as_str()) {
-                return None
+                return None;
             }
             Some(SchemaQualifiedName::from(local_name))
         }

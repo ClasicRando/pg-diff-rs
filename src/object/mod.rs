@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 
 pub use constraint::{get_constraints, Constraint};
-pub use database::{get_database, DatabaseBuilder};
+pub use database::{get_database, SourceControlDatabase};
 pub use extension::{get_extensions, Extension};
 pub use function::{get_functions, Function};
 pub use index::{get_indexes, Index};

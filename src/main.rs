@@ -1,5 +1,3 @@
-use async_walkdir::WalkDir;
-use futures::stream::StreamExt;
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -9,7 +7,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{get_database, DatabaseBuilder, SchemaQualifiedName};
+use crate::object::{get_database, SourceControlDatabase, SchemaQualifiedName};
 
 mod object;
 
@@ -178,25 +176,9 @@ async fn main() -> Result<(), PgDiffError> {
             // }
             // let pool = PgPool::connect_with(connect_options).await?;
             // let mut database = get_database(&pool).await?;
-            let mut builder = DatabaseBuilder::new();
-            let mut entries = WalkDir::new(files_path).map(|entry| entry.map(|e| e.path()));
-            while let Some(result) = entries.next().await {
-                let path = result?;
-                if path.is_dir() {
-                    continue;
-                }
-                let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
-                    println!("Skipping {:?}", path);
-                    continue;
-                };
-                if !file_name.ends_with(".pgsql") && !file_name.ends_with(".sql") {
-                    println!("Skipping {:?}", file_name);
-                    continue;
-                }
-                builder.append_source_file(path).await?;
-            }
+            let source_control_database = SourceControlDatabase::from_directory(files_path).await?;
 
-            println!("{builder:#?}")
+            println!("{source_control_database:#?}")
         }
     }
     Ok(())
