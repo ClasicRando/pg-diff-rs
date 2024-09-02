@@ -1,15 +1,10 @@
-use std::convert::Infallible;
 use std::fmt::{Display, Formatter, Write};
-use std::path::Path;
-use std::str::FromStr;
 
 use serde::Deserialize;
 use sqlx::postgres::types::Oid;
-use sqlx::PgPool;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
 
 pub use constraint::{get_constraints, Constraint};
+pub use database::{get_database, DatabaseBuilder};
 pub use extension::{get_extensions, Extension};
 pub use function::{get_functions, Function};
 pub use index::{get_indexes, Index};
@@ -20,10 +15,10 @@ pub use trigger::{get_triggers, Trigger};
 pub use udt::{get_udts, Udt};
 pub use view::{get_views, View};
 
-use crate::object::policy::{get_policies, Policy};
 use crate::{write_join, PgDiffError};
 
 mod constraint;
+mod database;
 mod extension;
 mod function;
 mod index;
@@ -107,36 +102,36 @@ pub struct SchemaQualifiedName {
     pub(crate) local_name: String,
 }
 
-impl FromStr for SchemaQualifiedName {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.split_once('.') {
+impl<S> From<S> for SchemaQualifiedName
+where
+    S: AsRef<str>,
+{
+    fn from(value: S) -> Self {
+        match value.as_ref().split_once('.') {
             Some((schema_name, local_name)) => SchemaQualifiedName {
                 schema_name: schema_name.to_owned(),
                 local_name: local_name.to_owned(),
             },
             None => SchemaQualifiedName {
                 schema_name: "".to_string(),
-                local_name: s.to_owned(),
+                local_name: value.as_ref().to_owned(),
             },
-        })
+        }
     }
 }
 
 impl SchemaQualifiedName {
+    fn new(schema_name: &str, local_name: &str) -> Self {
+        Self {
+            schema_name: schema_name.to_owned(),
+            local_name: local_name.to_owned(),
+        }
+    }
+    
     fn from_schema_name(schema_name: &str) -> Self {
         Self {
             schema_name: schema_name.to_string(),
             local_name: "".to_string(),
-        }
-    }
-
-    fn from_type_name(schema_qualified_name: &str) -> Self {
-        let parts = schema_qualified_name.split_once(".").unwrap();
-        Self {
-            schema_name: parts.0.to_string(),
-            local_name: parts.1.to_string(),
         }
     }
 }
@@ -262,106 +257,6 @@ where
         }
         w.write_str(");\n")?;
     }
-    Ok(())
-}
-
-#[derive(Debug)]
-pub struct Database {
-    pub(crate) schemas: Vec<Schema>,
-    pub(crate) udts: Vec<Udt>,
-    pub(crate) tables: Vec<Table>,
-    pub(crate) policies: Vec<Policy>,
-    pub(crate) constraints: Vec<Constraint>,
-    pub(crate) indexes: Vec<Index>,
-    pub(crate) triggers: Vec<Trigger>,
-    pub(crate) sequences: Vec<Sequence>,
-    pub(crate) functions: Vec<Function>,
-    pub(crate) views: Vec<View>,
-    pub(crate) extensions: Vec<Extension>,
-}
-
-pub async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
-    let mut schemas = get_schemas(pool).await?;
-    let schema_names: Vec<&str> = schemas
-        .iter()
-        .map(|s| s.name.schema_name.as_str())
-        .collect();
-    let udts = get_udts(pool, &schema_names).await?;
-    let tables = get_tables(pool, &schema_names).await?;
-    let table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
-    let policies = get_policies(pool, &table_oids).await?;
-    let constraints = get_constraints(pool, &table_oids).await?;
-    let indexes = get_indexes(pool, &table_oids).await?;
-    let triggers = get_triggers(pool, &table_oids).await?;
-    let sequences = get_sequences(pool, &schema_names).await?;
-    let functions = get_functions(pool, &schema_names).await?;
-    let views = get_views(pool, &schema_names).await?;
-    if let Some(index) = schemas
-        .iter()
-        .enumerate()
-        .find(|(_, schema)| schema.name.schema_name == "public")
-        .map(|(i, _)| i)
-    {
-        schemas.remove(index);
-    }
-    Ok(Database {
-        schemas,
-        udts,
-        tables,
-        policies,
-        constraints,
-        indexes,
-        triggers,
-        sequences,
-        functions,
-        views,
-        extensions: get_extensions(pool).await?,
-    })
-}
-
-/// Write create statements to file
-pub async fn write_create_statements_to_file<S, P>(
-    object: &S,
-    root_directory: P,
-) -> Result<(), PgDiffError>
-where
-    S: SqlObject,
-    P: AsRef<Path>,
-{
-    let mut statements = String::new();
-    object.create_statements(&mut statements)?;
-    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
-
-    let path = root_directory
-        .as_ref()
-        .join(object.object_type_name().to_lowercase());
-    tokio::fs::create_dir_all(&path).await?;
-    let mut file = File::create(path.join(format!("{}.pgsql", object.name()))).await?;
-    file.write_all(statements.as_bytes()).await?;
-    Ok(())
-}
-
-pub async fn append_create_statements_to_owner_table_file<S, P>(
-    object: &S,
-    owner_table: &SchemaQualifiedName,
-    root_directory: P,
-) -> Result<(), PgDiffError>
-where
-    S: SqlObject,
-    P: AsRef<Path>,
-{
-    let mut statements = String::new();
-    object.create_statements(&mut statements)?;
-    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
-
-    let path = root_directory.as_ref().join("table");
-    tokio::fs::create_dir_all(&path).await?;
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(path.join(format!("{}.pgsql", owner_table)))
-        .await?;
-    file.write_all("\n".as_bytes()).await?;
-    file.write_all(statements.as_bytes()).await?;
     Ok(())
 }
 

@@ -13,7 +13,7 @@ WITH simple_table_columns AS (
         ) AS "owner_table_name",
         JSON_OBJECT(
             'schema_name': quote_ident(tn.nspname),
-            'local_name': quote_ident(co.conname)
+            'local_name': quote_ident(t.relname)||'.'||quote_ident(co.conname)
         ) AS "schema_qualified_name",
         TO_JSONB(CASE co.contype
             WHEN 'c' THEN
@@ -41,7 +41,7 @@ WITH simple_table_columns AS (
                         SELECT ARRAY_AGG(a.attname ORDER BY a.attnum)
                         FROM simple_table_columns AS a
                         WHERE
-                            a.attrelid = co.conrelid
+                            a.attrelid = co.confrelid
                             AND a.attnum = ANY(co.confkey)
                     ),
                     'match_type': CASE confmatchtype

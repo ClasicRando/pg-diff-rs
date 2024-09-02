@@ -58,14 +58,10 @@ impl SqlObject for View {
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE OR REPLACE VIEW {}", self.name)?;
         if let Some(columns) = &self.columns {
-            w.write_str("(")?;
-            write_join!(w, columns.iter(), ",");
-            w.write_str(")")?;
+            write_join!(w, "(", columns.iter(), ",", ")");
         }
         if let Some(options) = &self.options {
-            w.write_str("(")?;
-            write_join!(w, options.iter(), ",");
-            w.write_str(")")?;
+            write_join!(w, "WITH (", options.iter(), ",", ")");
         }
         writeln!(w, " AS\n{}", self.query)?;
         Ok(())

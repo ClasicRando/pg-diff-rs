@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
-use std::str::FromStr;
 
 use lazy_regex::regex;
 use sqlx::error::BoxDynError;
@@ -8,7 +7,7 @@ use sqlx::postgres::types::Oid;
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
 use sqlx::{query_as, Decode, PgPool, Postgres};
 
-use crate::object::plpgsql::PlPgSqlFunction;
+use crate::object::plpgsql::{parse_plpgsql_function, PlPgSqlFunction};
 use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
@@ -88,7 +87,7 @@ pub struct FunctionArgument<'s> {
 impl<'s> FunctionArgument<'s> {
     fn from_arg_list(args: &'s str) -> Vec<Self> {
         if args.is_empty() {
-            return Vec::new();
+            return vec![];
         }
         args
             .split(',')
@@ -179,12 +178,12 @@ impl Function {
                         error: e,
                     })?;
                 for table in result.tables() {
-                    let table_name = SchemaQualifiedName::from_str(&table)?;
+                    let table_name = SchemaQualifiedName::from(&table);
                     let tables = get_table_by_qualified_name(pool, &table_name).await?;
                     self.add_dependencies_if_match(&table_name, tables);
                 }
                 for function in result.functions() {
-                    let function_name = SchemaQualifiedName::from_str(&function)?;
+                    let function_name = SchemaQualifiedName::from(&function);
                     let functions = get_functions_by_qualified_name(pool, &function_name).await?;
                     self.add_dependencies_if_match(&function_name, functions);
                 }
@@ -192,17 +191,10 @@ impl Function {
             "plpgsql" => {
                 let mut block = String::new();
                 self.create_statement(&mut block, true)?;
-                let result = match pg_query::parse_plpgsql(&block) {
+                let result: Vec<PlPgSqlFunction> = match parse_plpgsql_function(&block) {
                     Ok(inner) => inner,
                     Err(error) => {
-                        println!("Could not get dependencies of dynamic function {} due to parsing error. {error}", self.name);
-                        return Ok(());
-                    }
-                };
-                let result: Vec<PlPgSqlFunction> = match serde_json::from_value(result.clone()) {
-                    Ok(inner) => inner,
-                    Err(error) => {
-                        println!("plpg/sql ast cannot be parsed for {}. {error}\n", self.name);
+                        println!("Object Name: {}. {error}\n", self.name);
                         return Ok(());
                     }
                 };

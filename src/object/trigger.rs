@@ -65,7 +65,7 @@ impl SqlObject for Trigger {
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(w, "CREATE TRIGGER {} {} ", self.name, self.timing.as_ref())?;
-        write_join!(w, self.events.iter(), " ");
+        write_join!(w, self.events.iter(), " OR ");
         write!(w, "\nON {}", self.owner_table_name)?;
         if self.old_name.is_some() || self.old_name.is_some() {
             w.write_str("\nREFERENCING")?;

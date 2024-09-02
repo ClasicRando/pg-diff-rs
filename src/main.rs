@@ -1,3 +1,5 @@
+use async_walkdir::WalkDir;
+use futures::stream::StreamExt;
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -7,10 +9,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{
-    append_create_statements_to_owner_table_file, get_database, write_create_statements_to_file,
-    SchemaQualifiedName,
-};
+use crate::object::{get_database, DatabaseBuilder, SchemaQualifiedName};
 
 mod object;
 
@@ -39,6 +38,10 @@ pub enum PgDiffError {
         object_name: SchemaQualifiedName,
         error: pg_query::Error,
     },
+    #[error("Parse error for file {path}. {message}")]
+    FileQueryParse { path: PathBuf, message: String },
+    #[error(transparent)]
+    WalkDir(#[from] async_walkdir::Error),
 }
 
 #[macro_export]
@@ -65,7 +68,7 @@ macro_rules! write_join {
     };
     ($write:ident, $prefix:literal, $items:expr, $separator:literal, $postfix:literal) => {
         if !$prefix.is_empty() {
-            $write.write_str($prefix);
+            $write.write_str($prefix)?;
         };
         let mut iter = $items;
         if let Some(item) = iter.next() {
@@ -76,7 +79,7 @@ macro_rules! write_join {
             }
         };
         if !$postfix.is_empty() {
-            $write.write_str($postfix);
+            $write.write_str($postfix)?;
         };
     };
 }
@@ -161,85 +164,40 @@ async fn main() -> Result<(), PgDiffError> {
                 connect_options = connect_options.password(&password);
             }
             let pool = PgPool::connect_with(connect_options).await?;
-            let mut database = get_database(&pool).await?;
-            for schema in &database.schemas {
-                write_create_statements_to_file(schema, &output_path).await?;
-            }
-            for udt in &database.udts {
-                write_create_statements_to_file(udt, &output_path).await?;
-            }
-            for table in &database.tables {
-                write_create_statements_to_file(table, &output_path).await?;
-                for policy in database
-                    .policies
-                    .iter()
-                    .filter(|c| c.table_oid == table.oid)
-                {
-                    append_create_statements_to_owner_table_file(
-                        policy,
-                        &policy.owner_table_name,
-                        &output_path,
-                    )
-                    .await?
-                }
-                for constraint in database
-                    .constraints
-                    .iter()
-                    .filter(|c| c.table_oid == table.oid)
-                {
-                    append_create_statements_to_owner_table_file(
-                        constraint,
-                        &constraint.owner_table_name,
-                        &output_path,
-                    )
-                    .await?
-                }
-                for index in database.indexes.iter().filter(|i| i.table_oid == table.oid) {
-                    append_create_statements_to_owner_table_file(
-                        index,
-                        &index.owner_table_name,
-                        &output_path,
-                    )
-                    .await?
-                }
-                for trigger in database
-                    .triggers
-                    .iter()
-                    .filter(|t| t.table_oid == table.oid)
-                {
-                    append_create_statements_to_owner_table_file(
-                        trigger,
-                        &trigger.owner_table_name,
-                        &output_path,
-                    )
-                    .await?
-                }
-            }
-            for sequence in &database.sequences {
-                if let Some(owner_table) = &sequence.owner {
-                    append_create_statements_to_owner_table_file(
-                        sequence,
-                        &owner_table.table_name,
-                        &output_path,
-                    )
-                    .await?;
-                } else {
-                    write_create_statements_to_file(sequence, &output_path).await?;
-                }
-            }
-            for function in database.functions.iter_mut() {
-                function.extract_more_dependencies(&pool).await?;
-                write_create_statements_to_file(function, &output_path).await?;
-            }
-            for view in &database.views {
-                write_create_statements_to_file(view, &output_path).await?;
-            }
-            for extension in &database.extensions {
-                write_create_statements_to_file(extension, &output_path).await?;
-            }
+            let database = get_database(&pool).await?;
+            database.script_out(output_path).await?;
         }
         Commands::Migrate { .. } => {}
-        Commands::Plan { .. } => {}
+        Commands::Plan {
+            connection,
+            files_path,
+        } => {
+            // let mut connect_options = PgConnectOptions::from_str(connection)?;
+            // if let Ok(password) = std::env::var("PGPASSWORD") {
+            //     connect_options = connect_options.password(&password);
+            // }
+            // let pool = PgPool::connect_with(connect_options).await?;
+            // let mut database = get_database(&pool).await?;
+            let mut builder = DatabaseBuilder::new();
+            let mut entries = WalkDir::new(files_path).map(|entry| entry.map(|e| e.path()));
+            while let Some(result) = entries.next().await {
+                let path = result?;
+                if path.is_dir() {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+                    println!("Skipping {:?}", path);
+                    continue;
+                };
+                if !file_name.ends_with(".pgsql") && !file_name.ends_with(".sql") {
+                    println!("Skipping {:?}", file_name);
+                    continue;
+                }
+                builder.append_source_file(path).await?;
+            }
+
+            println!("{builder:#?}")
+        }
     }
     Ok(())
 }

@@ -1,10 +1,17 @@
 use lazy_regex::regex;
-use std::str::FromStr;
 
 use serde::Deserialize;
 
 use crate::object::SchemaQualifiedName;
 use crate::PgDiffError;
+
+pub fn parse_plpgsql_function(function_code: &str) -> Result<Vec<PlPgSqlFunction>, PgDiffError> {
+    let parse_result = pg_query::parse_plpgsql(function_code).map_err(|error| {
+        PgDiffError::General(format!("Could not parse plpg/sql function. {error}"))
+    })?;
+    serde_json::from_value(parse_result)
+        .map_err(|error| PgDiffError::General(format!("Could not parse plpg/sql ast. {error}")))
+}
 
 trait ObjectNode {
     fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), PgDiffError>;
@@ -99,7 +106,7 @@ impl ObjectNode for PlPgSqlVariable {
         };
         default_value.extract_objects(buffer)?;
         let PlPgSqlType::Inner { type_name } = data_type;
-        buffer.push(SchemaQualifiedName::from_str(type_name)?);
+        buffer.push(SchemaQualifiedName::from(type_name));
         Ok(())
     }
 }
@@ -131,16 +138,16 @@ impl ObjectNode for PlPgSqlExpr {
             Ok(inner) => inner,
             Err(error) => {
                 return Err(PgDiffError::PgQuery {
-                    object_name: SchemaQualifiedName::from_str("plpgsql_block")?,
+                    object_name: SchemaQualifiedName::from("plpgsql_block"),
                     error,
                 })
             }
         };
         for table in parse_result.tables() {
-            buffer.push(SchemaQualifiedName::from_str(&table)?);
+            buffer.push(SchemaQualifiedName::from(&table));
         }
         for function in parse_result.functions() {
-            buffer.push(SchemaQualifiedName::from_str(&function)?);
+            buffer.push(SchemaQualifiedName::from(&function));
         }
         Ok(())
     }
@@ -836,26 +843,19 @@ pub enum PlPgSqlFunction {
 }
 
 impl PlPgSqlFunction {
-    pub fn get_types(&self) -> Vec<&str> {
-        let PlPgSqlFunction::Inner { datums, .. } = self;
-        datums
-            .iter()
-            .filter_map(|v| {
-                if let PlPgSqlVariable::Var { data_type, .. } = v {
-                    match data_type {
-                        PlPgSqlType::Inner { type_name } => Some(type_name.as_str()),
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     pub fn get_objects(&self) -> Result<Vec<SchemaQualifiedName>, PgDiffError> {
-        let PlPgSqlFunction::Inner { action, .. } = self;
-        let mut result = Vec::new();
+        let PlPgSqlFunction::Inner { action, datums, .. } = self;
+        let mut result = vec![];
         action.extract_objects(&mut result)?;
+        for datum in datums {
+            if let PlPgSqlVariable::Var {
+                data_type: PlPgSqlType::Inner { type_name },
+                ..
+            } = datum
+            {
+                result.push(SchemaQualifiedName::from(type_name))
+            }
+        }
         Ok(result)
     }
 }

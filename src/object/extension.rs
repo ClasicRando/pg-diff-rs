@@ -31,28 +31,6 @@ pub struct Extension {
     pub(crate) dependencies: Vec<Dependency>,
 }
 
-// impl<'r> FromRow<'r, PgRow> for Extension {
-//     fn from_row(row: &'r PgRow) -> Result<Self, Error> {
-//         let oid: Oid = row.try_get("oid")?;
-//         let name: String = row.try_get("name")?;
-//         let version: String = row.try_get("version")?;
-//         let schema_name: String = row.try_get("schema_name")?;
-//         let is_relocatable: bool = row.try_get("is_relocatable")?;
-//         let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
-//         Ok(Self {
-//             oid,
-//             name: SchemaQualifiedName {
-//                 local_name: name,
-//                 schema_name: "".to_string(),
-//             },
-//             version,
-//             schema_name,
-//             is_relocatable,
-//             dependencies: dependencies.0,
-//         })
-//     }
-// }
-
 impl SqlObject for Extension {
     fn name(&self) -> &SchemaQualifiedName {
         &self.name
@@ -74,7 +52,7 @@ impl SqlObject for Extension {
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "CREATE EXTENSION {} VERSION {}", self.name, self.version)?;
+        write!(w, "CREATE EXTENSION {} VERSION '{}'", self.name, self.version)?;
         if self.is_relocatable {
             write!(w, " SCHEMA {}", self.schema_name)?;
         }
@@ -93,7 +71,7 @@ impl SqlObject for Extension {
         if self.version != new.version {
             writeln!(
                 w,
-                "ALTER EXTENSION {} UPDATE TO {};",
+                "ALTER EXTENSION {} UPDATE TO '{}';",
                 self.name, new.version
             )?;
         }

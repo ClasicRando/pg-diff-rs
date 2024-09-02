@@ -13,7 +13,7 @@ WITH simple_table_columns AS (
         )) AS owner_table_name,
         TO_JSONB(JSON_OBJECT(
             'schema_name': quote_ident(ton.nspname),
-            'local_name': quote_ident(t.tgname)
+            'local_name': quote_ident(tc.relname)||'.'||quote_ident(t.tgname)
         )) AS schema_qualified_name,
         TO_JSONB(JSON_OBJECT(
             'schema_name': quote_ident(tpn.nspname),
