@@ -7,7 +7,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{get_database, SourceControlDatabase, SchemaQualifiedName};
+use crate::object::{Database, SchemaQualifiedName, SourceControlDatabase};
 
 mod object;
 
@@ -162,7 +162,7 @@ async fn main() -> Result<(), PgDiffError> {
                 connect_options = connect_options.password(&password);
             }
             let pool = PgPool::connect_with(connect_options).await?;
-            let database = get_database(&pool).await?;
+            let database = Database::from_connection(&pool).await?;
             database.script_out(output_path).await?;
         }
         Commands::Migrate { .. } => {}

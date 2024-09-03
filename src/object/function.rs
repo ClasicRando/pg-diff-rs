@@ -11,7 +11,10 @@ use crate::object::plpgsql::{parse_plpgsql_function, PlPgSqlFunction};
 use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
-use super::{compare_option_lists, Dependency, GenericObject, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{
+    compare_option_lists, Dependency, GenericObject, OptionListObject, PgCatalog,
+    SchemaQualifiedName, SqlObject,
+};
 
 const PUBLIC_SCHEMA_NAME: &str = "public";
 const PG_CATALOG_SCHEMA_NAME: &str = "pg_catalog";
@@ -221,8 +224,12 @@ impl Function {
         }
         Ok(())
     }
-    
-    fn add_dependencies_if_match(&mut self, name: &SchemaQualifiedName, objects: Vec<GenericObject>) {
+
+    fn add_dependencies_if_match(
+        &mut self,
+        name: &SchemaQualifiedName,
+        objects: Vec<GenericObject>,
+    ) {
         match &objects[..] {
             [object] => {
                 if object.name.schema_name == PG_CATALOG_SCHEMA_NAME {
@@ -235,7 +242,10 @@ impl Function {
                 self.dependencies.push(object.dependency);
             }
             [] => {
-                println!("Could not match object {name} to an object for {}. Skipping for now.", self.name)
+                println!(
+                    "Could not match object {name} to an object for {}. Skipping for now.",
+                    self.name
+                )
             }
             objects => {
                 if objects

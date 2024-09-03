@@ -635,6 +635,47 @@ pub struct Database {
 }
 
 impl Database {
+    pub async fn from_connection(pool: &PgPool) -> Result<Self, PgDiffError> {
+        let mut schemas = get_schemas(pool).await?;
+        let schema_names: Vec<&str> = schemas
+            .iter()
+            .map(|s| s.name.schema_name.as_str())
+            .collect();
+        let udts = get_udts(pool, &schema_names).await?;
+        let tables = get_tables(pool, &schema_names).await?;
+        let table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
+        let policies = get_policies(pool, &table_oids).await?;
+        let constraints = get_constraints(pool, &table_oids).await?;
+        let indexes = get_indexes(pool, &table_oids).await?;
+        let triggers = get_triggers(pool, &table_oids).await?;
+        let sequences = get_sequences(pool, &schema_names).await?;
+        let functions = get_functions(pool, &schema_names).await?;
+        let views = get_views(pool, &schema_names).await?;
+        if let Some(index) = schemas
+            .iter()
+            .enumerate()
+            .find(|(_, schema)| schema.name.schema_name == "public")
+            .map(|(i, _)| i)
+        {
+            schemas.remove(index);
+        }
+        let mut database = Database {
+            schemas,
+            udts,
+            tables,
+            policies,
+            constraints,
+            indexes,
+            triggers,
+            sequences,
+            functions,
+            views,
+            extensions: get_extensions(pool).await?,
+        };
+        database.collect_additional_dependencies(pool).await?;
+        Ok(database)
+    }
+
     async fn collect_additional_dependencies(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
         for function in self.functions.iter_mut() {
             function.extract_more_dependencies(pool).await?;
@@ -710,47 +751,6 @@ impl Database {
         }
         Ok(())
     }
-}
-
-pub async fn get_database(pool: &PgPool) -> Result<Database, PgDiffError> {
-    let mut schemas = get_schemas(pool).await?;
-    let schema_names: Vec<&str> = schemas
-        .iter()
-        .map(|s| s.name.schema_name.as_str())
-        .collect();
-    let udts = get_udts(pool, &schema_names).await?;
-    let tables = get_tables(pool, &schema_names).await?;
-    let table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
-    let policies = get_policies(pool, &table_oids).await?;
-    let constraints = get_constraints(pool, &table_oids).await?;
-    let indexes = get_indexes(pool, &table_oids).await?;
-    let triggers = get_triggers(pool, &table_oids).await?;
-    let sequences = get_sequences(pool, &schema_names).await?;
-    let functions = get_functions(pool, &schema_names).await?;
-    let views = get_views(pool, &schema_names).await?;
-    if let Some(index) = schemas
-        .iter()
-        .enumerate()
-        .find(|(_, schema)| schema.name.schema_name == "public")
-        .map(|(i, _)| i)
-    {
-        schemas.remove(index);
-    }
-    let mut database = Database {
-        schemas,
-        udts,
-        tables,
-        policies,
-        constraints,
-        indexes,
-        triggers,
-        sequences,
-        functions,
-        views,
-        extensions: get_extensions(pool).await?,
-    };
-    database.collect_additional_dependencies(pool).await?;
-    Ok(database)
 }
 
 /// Write create statements to file

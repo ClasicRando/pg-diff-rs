@@ -52,7 +52,11 @@ impl SqlObject for Extension {
     }
 
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
-        write!(w, "CREATE EXTENSION {} VERSION '{}'", self.name, self.version)?;
+        write!(
+            w,
+            "CREATE EXTENSION {} VERSION '{}'",
+            self.name, self.version
+        )?;
         if self.is_relocatable {
             write!(w, " SCHEMA {}", self.schema_name)?;
         }

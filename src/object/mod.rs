@@ -3,17 +3,17 @@ use std::fmt::{Display, Formatter, Write};
 use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 
-pub use constraint::{get_constraints, Constraint};
-pub use database::{get_database, SourceControlDatabase};
-pub use extension::{get_extensions, Extension};
-pub use function::{get_functions, Function};
-pub use index::{get_indexes, Index};
-pub use schema::{get_schemas, Schema};
-pub use sequence::{get_sequences, Sequence};
-pub use table::{get_tables, Table};
-pub use trigger::{get_triggers, Trigger};
-pub use udt::{get_udts, Udt};
-pub use view::{get_views, View};
+use constraint::{get_constraints, Constraint};
+pub use database::{Database, SourceControlDatabase};
+use extension::{get_extensions, Extension};
+use function::{get_functions, Function};
+use index::{get_indexes, Index};
+use schema::{get_schemas, Schema};
+use sequence::{get_sequences, Sequence};
+use table::{get_tables, Table};
+use trigger::{get_triggers, Trigger};
+use udt::{get_udts, Udt};
+use view::{get_views, View};
 
 use crate::{write_join, PgDiffError};
 
@@ -33,7 +33,7 @@ mod view;
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct StorageParameter(pub(crate) String);
+struct StorageParameter(pub(crate) String);
 
 impl Display for StorageParameter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -42,7 +42,7 @@ impl Display for StorageParameter {
 }
 
 #[derive(Debug, PartialEq, Deserialize, sqlx::FromRow)]
-pub struct IndexParameters {
+struct IndexParameters {
     pub(crate) include: Option<Vec<String>>,
     pub(crate) with: Option<Vec<StorageParameter>>,
     pub(crate) tablespace: Option<TableSpace>,
@@ -73,7 +73,7 @@ impl Display for IndexParameters {
     }
 }
 
-pub trait SqlObject: PartialEq {
+trait SqlObject: PartialEq {
     fn name(&self) -> &SchemaQualifiedName;
     fn object_type_name(&self) -> &str;
     fn dependency_declaration(&self) -> Dependency;
@@ -127,7 +127,7 @@ impl SchemaQualifiedName {
             local_name: local_name.to_owned(),
         }
     }
-    
+
     fn from_schema_name(schema_name: &str) -> Self {
         Self {
             schema_name: schema_name.to_string(),
@@ -150,7 +150,7 @@ impl Display for SchemaQualifiedName {
 
 #[derive(Debug, PartialEq, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct Collation(pub(crate) String);
+struct Collation(pub(crate) String);
 
 impl Display for Collation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -166,7 +166,7 @@ impl Collation {
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct TableSpace(pub(crate) String);
+struct TableSpace(pub(crate) String);
 
 impl Display for TableSpace {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -174,7 +174,7 @@ impl Display for TableSpace {
     }
 }
 
-pub struct TablespaceCompare<'a> {
+struct TablespaceCompare<'a> {
     old: Option<&'a TableSpace>,
     new: Option<&'a TableSpace>,
 }
@@ -211,7 +211,7 @@ impl<'a> Display for TablespaceCompare<'a> {
     }
 }
 
-pub trait OptionListObject: SqlObject {
+trait OptionListObject: SqlObject {
     fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
     where
         W: Write,
@@ -221,7 +221,7 @@ pub trait OptionListObject: SqlObject {
     }
 }
 
-pub fn compare_option_lists<A, O, W>(
+fn compare_option_lists<A, O, W>(
     object: &A,
     old: Option<&[O]>,
     new: Option<&[O]>,
@@ -261,7 +261,7 @@ where
 }
 
 #[derive(Debug, PartialEq, Deserialize, Copy, Clone)]
-pub enum PgCatalog {
+enum PgCatalog {
     #[serde(rename = "pg_namespace")]
     Namespace,
     #[serde(rename = "pg_proc")]
@@ -281,7 +281,7 @@ pub enum PgCatalog {
 }
 
 #[derive(Debug, PartialEq, Deserialize, Copy, Clone)]
-pub struct Dependency {
+struct Dependency {
     oid: Oid,
     catalog: PgCatalog,
 }
