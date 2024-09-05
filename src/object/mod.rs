@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 
 use constraint::{get_constraints, Constraint};
-pub use database::{Database, SourceControlDatabase};
+pub use database::{DatabaseMigration, Database};
 use extension::{get_extensions, Extension};
 use function::{get_functions, Function};
 use index::{get_indexes, Index};
@@ -30,6 +30,19 @@ mod table;
 mod trigger;
 mod udt;
 mod view;
+
+const BUILT_IN_NAMES: &[&str] = &[
+    "text", "oid", "inet", "jsonb", "char", "uuid", "date", "trigger", "regclass", "bigint",
+];
+
+const BUILT_IN_FUNCTIONS: &[&str] = &[
+    "array_agg",
+    "json_object",
+    "json_agg",
+    "array_length",
+    "pg_notify",
+    "format",
+];
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
@@ -94,6 +107,26 @@ trait SqlObject: PartialEq {
             .iter()
             .all(|d| completed_objects.contains(d))
     }
+}
+
+fn compare_object_groups<S, W>(old_objects: &[S], new_objects: &[S], writer: &mut W) -> Result<(), PgDiffError>
+where
+    S: SqlObject,
+    W: Write
+{
+    for existing_object in old_objects {
+        match new_objects.iter().find(|s| s.name() == existing_object.name()) {
+            Some(new_schema) if existing_object != new_schema => {
+                existing_object.alter_statements(new_schema, writer)?
+            },
+            None => existing_object.drop_statements(writer)?,
+            _ => {}
+        }
+    }
+    for new_object in new_objects.iter().filter(|s| !old_objects.contains(s)) {
+        new_object.create_statements(writer)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Deserialize)]
@@ -292,4 +325,15 @@ struct GenericObject {
     name: SchemaQualifiedName,
     #[sqlx(json)]
     dependency: Dependency,
+}
+
+fn find_index<T, F>(slice: &[T], predicate: F) -> Option<usize>
+where
+    F: Fn(&T) -> bool,
+{
+    slice
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| if predicate(item) { Some(i) } else { None })
+        .next()
 }

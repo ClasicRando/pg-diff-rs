@@ -7,7 +7,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{Database, SchemaQualifiedName, SourceControlDatabase};
+use crate::object::{Database, DatabaseMigration, SchemaQualifiedName};
 
 mod object;
 
@@ -40,6 +40,10 @@ pub enum PgDiffError {
     FileQueryParse { path: PathBuf, message: String },
     #[error(transparent)]
     WalkDir(#[from] async_walkdir::Error),
+    #[error("Could not parse all source control statements into a temp database. Remaining\n{remaining_statements:#?}")]
+    SourceControlScript {
+        remaining_statements: Vec<String>
+    }
 }
 
 #[macro_export]
@@ -162,7 +166,7 @@ async fn main() -> Result<(), PgDiffError> {
                 connect_options = connect_options.password(&password);
             }
             let pool = PgPool::connect_with(connect_options).await?;
-            let database = Database::from_connection(&pool).await?;
+            let database = Database::from_connection(pool).await?;
             database.script_out(output_path).await?;
         }
         Commands::Migrate { .. } => {}
@@ -170,15 +174,14 @@ async fn main() -> Result<(), PgDiffError> {
             connection,
             files_path,
         } => {
-            // let mut connect_options = PgConnectOptions::from_str(connection)?;
-            // if let Ok(password) = std::env::var("PGPASSWORD") {
-            //     connect_options = connect_options.password(&password);
-            // }
-            // let pool = PgPool::connect_with(connect_options).await?;
-            // let mut database = get_database(&pool).await?;
-            let source_control_database = SourceControlDatabase::from_directory(files_path).await?;
-
-            println!("{source_control_database:#?}")
+            let mut connect_options = PgConnectOptions::from_str(connection)?;
+            if let Ok(password) = std::env::var("PGPASSWORD") {
+                connect_options = connect_options.password(&password);
+            }
+            let pool = PgPool::connect_with(connect_options).await?;
+            let mut database_migration = DatabaseMigration::new(pool, files_path).await?;
+            let migration_script = database_migration.plan_migration().await?;
+            println!("{}", migration_script);
         }
     }
     Ok(())

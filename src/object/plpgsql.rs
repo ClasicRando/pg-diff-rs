@@ -2,7 +2,7 @@ use lazy_regex::regex;
 
 use serde::Deserialize;
 
-use crate::object::SchemaQualifiedName;
+use crate::object::{BUILT_IN_FUNCTIONS, BUILT_IN_NAMES, SchemaQualifiedName};
 use crate::PgDiffError;
 
 pub fn parse_plpgsql_function(function_code: &str) -> Result<Vec<PlPgSqlFunction>, PgDiffError> {
@@ -147,6 +147,9 @@ impl ObjectNode for PlPgSqlExpr {
             buffer.push(SchemaQualifiedName::from(&table));
         }
         for function in parse_result.functions() {
+            if BUILT_IN_FUNCTIONS.contains(&function.as_str()) {
+                continue;
+            }
             buffer.push(SchemaQualifiedName::from(&function));
         }
         Ok(())
@@ -853,6 +856,10 @@ impl PlPgSqlFunction {
                 ..
             } = datum
             {
+                if type_name == "UNKNOWN" || BUILT_IN_NAMES.contains(&type_name.as_str())
+                {
+                    continue;
+                }
                 result.push(SchemaQualifiedName::from(type_name))
             }
         }

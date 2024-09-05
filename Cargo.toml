@@ -15,3 +15,4 @@ pg_query = "5.1.0"
 lazy-regex = { version = "3.3.0", features = ["regex"] }
 async-walkdir = "2.0.0"
 futures = "0.3.30"
+uuid = { version = "1.10.0", features = ["v4"] }
