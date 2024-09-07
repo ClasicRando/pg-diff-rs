@@ -1,12 +1,11 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
 use crate::{write_join, PgDiffError};
 
-use super::{Collation, Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{Collation, SchemaQualifiedName, SqlObject};
 
 pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDiffError> {
     let udts_query = include_str!("./../../queries/udts.pgsql");
@@ -22,13 +21,12 @@ pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDif
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Udt {
-    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     #[sqlx(json)]
     pub(crate) udt_type: UdtType,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl SqlObject for Udt {
@@ -40,14 +38,7 @@ impl SqlObject for Udt {
         self.udt_type.name()
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Type,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

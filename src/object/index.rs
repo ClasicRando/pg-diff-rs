@@ -6,8 +6,8 @@ use sqlx::{query_as, PgPool};
 use crate::PgDiffError;
 
 use super::{
-    compare_option_lists, Dependency, IndexParameters, OptionListObject, PgCatalog,
-    SchemaQualifiedName, SqlObject, TablespaceCompare,
+    compare_option_lists, IndexParameters, OptionListObject, SchemaQualifiedName, SqlObject,
+    TablespaceCompare,
 };
 
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
@@ -24,7 +24,6 @@ pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, Pg
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct Index {
-    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
@@ -36,7 +35,7 @@ pub struct Index {
     #[sqlx(flatten)]
     pub(crate) parameters: IndexParameters,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl PartialEq for Index {
@@ -56,14 +55,7 @@ impl SqlObject for Index {
         "INDEX"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Class,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

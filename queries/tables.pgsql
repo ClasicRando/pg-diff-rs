@@ -89,8 +89,8 @@ LEFT JOIN pg_catalog.pg_tablespace tts
 CROSS JOIN LATERAL (
     SELECT
         ARRAY[JSON_OBJECT(
-            'oid': CAST(tn.oid AS INTEGER),
-            'catalog': 'pg_namespace'
+            'schema_name': quote_ident(tn.nspname),
+            'local_name': ''
         )] AS "dependencies"
 ) AS nd
 CROSS JOIN LATERAL (
@@ -128,15 +128,17 @@ JOIN table_columns AS c
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(
-            'catalog': 'pg_class',
-            'oid': CAST(td.oid AS integer)
+            'schema_name': quote_ident(td.nspname),
+            'local_name': quote_ident(td.relname)
         )) AS "dependencies"
 	FROM (
-		SELECT DISTINCT td.oid
+		SELECT DISTINCT td.relname, tdn.nspname
 		FROM pg_catalog.pg_depend AS d
 		JOIN pg_catalog.pg_class AS td
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = td.oid
+		JOIN pg_catalog.pg_namespace AS tdn
+			ON td.relnamespace = tdn.oid
 		WHERE
             d.classid = 'pg_class'::REGCLASS
             AND d.objid = t.oid
@@ -147,15 +149,17 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
-            'catalog': 'pg_type',
-            'oid': CAST(tyd.oid AS integer)
+            'schema_name': quote_ident(tyd.nspname),
+            'local_name': quote_ident(tyd.typname)
         )) AS "dependencies"
     FROM (
-        SELECT DISTINCT tyd.oid
+        SELECT DISTINCT tyd.typname, tydn.nspname
         FROM pg_catalog.pg_depend AS d
         JOIN pg_catalog.pg_type AS tyd
             ON d.refclassid = 'pg_type'::REGCLASS
             AND d.refobjid = tyd.oid
+		JOIN pg_catalog.pg_namespace AS tydn
+			ON tyd.typnamespace = tydn.oid
         WHERE
             d.classid = 'pg_class'::REGCLASS
             AND d.objid = t.oid

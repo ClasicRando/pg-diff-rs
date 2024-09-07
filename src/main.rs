@@ -7,7 +7,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{Database, DatabaseMigration, SchemaQualifiedName};
+use crate::object::{Database, DatabaseMigration, SchemaQualifiedName, set_verbose_flag};
 
 mod object;
 
@@ -111,6 +111,8 @@ fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>
     long_about = None
 )]
 struct Args {
+    #[arg(short)]
+    verbose: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -155,7 +157,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), PgDiffError> {
     let args = Args::parse();
-
+    set_verbose_flag(args.verbose);
     match &args.command {
         Commands::Script {
             output_path,
@@ -181,6 +183,10 @@ async fn main() -> Result<(), PgDiffError> {
             let pool = PgPool::connect_with(connect_options).await?;
             let mut database_migration = DatabaseMigration::new(pool, files_path).await?;
             let migration_script = database_migration.plan_migration().await?;
+            if migration_script.is_empty() {
+                println!("\nNo migration needed!");
+                return Ok(())
+            }
             println!("{}", migration_script);
         }
     }

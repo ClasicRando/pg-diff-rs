@@ -25,13 +25,13 @@ SELECT
         CASE
             WHEN sa.attnum IS NOT NULL THEN
                 ARRAY[JSON_OBJECT(
-                    'catalog': 'pg_class',
-                    'oid': CAST(so.oid AS integer)
+                    'schema_name': quote_ident(son.nspname),
+                    'local_name': quote_ident(so.relname)
                 )]
             ELSE
                 ARRAY[JSON_OBJECT(
-                    'catalog': 'pg_namespace',
-                    'oid': CAST(sn.oid AS integer)
+                    'schema_name': quote_ident(sn.nspname),
+                    'local_name': ''
                 )]
         END
     ) AS "dependencies"

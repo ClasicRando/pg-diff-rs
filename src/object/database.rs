@@ -4,18 +4,23 @@ use std::path::Path;
 
 use async_walkdir::WalkDir;
 use futures::stream::StreamExt;
-use pg_query::protobuf::{ConstrType, node::Node, RangeVar};
+use pg_query::protobuf::{node::Node, ConstrType, RangeVar};
 use serde::Deserialize;
-use sqlx::{Error, PgPool, query_as, query_scalar};
-use sqlx::postgres::PgDatabaseError;
 use sqlx::postgres::types::Oid;
+use sqlx::postgres::PgDatabaseError;
 use sqlx::types::Uuid;
+use sqlx::{query_as, query_scalar, Error, PgPool};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::object::{BUILT_IN_FUNCTIONS, BUILT_IN_NAMES, compare_object_groups, Constraint, Extension, find_index, Function, get_constraints, get_extensions, get_functions, get_indexes, get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views, Index, Schema, SchemaQualifiedName, Sequence, SqlObject, Table, Trigger, Udt, View};
 use crate::object::plpgsql::parse_plpgsql_function;
 use crate::object::policy::{get_policies, Policy};
+use crate::object::{
+    compare_object_groups, find_index, get_constraints, get_extensions, get_functions, get_indexes,
+    get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views, is_verbose,
+    Constraint, Extension, Function, Index, Schema, SchemaQualifiedName, Sequence, SqlObject,
+    Table, Trigger, Udt, View, BUILT_IN_FUNCTIONS, BUILT_IN_NAMES,
+};
 use crate::PgDiffError;
 
 pub struct DatabaseMigration {
@@ -38,11 +43,16 @@ impl DatabaseMigration {
             source_control_database,
         })
     }
-    
+
     pub async fn plan_migration(&mut self) -> Result<String, PgDiffError> {
-        self.source_control_database.apply_to_temp_database().await?;
-        let source_control_temp_database = self.source_control_database.scrape_temp_database().await?;
-        let migration_script = self.database.compare_to_other_database(&source_control_temp_database)?;
+        self.source_control_database
+            .apply_to_temp_database()
+            .await?;
+        let source_control_temp_database =
+            self.source_control_database.scrape_temp_database().await?;
+        let migration_script = self
+            .database
+            .compare_to_other_database(&source_control_temp_database)?;
         Ok(migration_script)
     }
 }
@@ -52,10 +62,13 @@ impl Drop for DatabaseMigration {
         let db_name = self.source_control_database.temp_db_name.clone();
         let pool = self.pool.clone();
         let fut = async move {
-            sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE);", db_name))
-                .execute(&pool)
-                .await
-                .unwrap_or_else(|_| panic!("Failed to drop temp database named '{}'", db_name));
+            sqlx::query(&format!(
+                "DROP DATABASE IF EXISTS {} WITH (FORCE);",
+                db_name
+            ))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|_| panic!("Failed to drop temp database named '{}'", db_name));
         };
         tokio::spawn(fut);
     }
@@ -118,10 +131,12 @@ impl<'n> NodeIter<'n> {
                 }
             }
             Err(error) => {
-                println!(
-                    "Skipping SQL code block since the source text could not be parsed. {error}\n{}",
-                    code
-                )
+                if is_verbose() {
+                    println!(
+                        "Skipping SQL code block since the source text could not be parsed. {error}\n{}",
+                        code
+                    )
+                }
             }
         }
     }
@@ -135,13 +150,17 @@ impl<'n> NodeIter<'n> {
                             self.queued_elements.append(&mut VecDeque::from(objects));
                         }
                         Err(error) => {
-                            println!("Skipping plpg/sq; code block since the source text could not be parsed for objects. {error}")
+                            if is_verbose() {
+                                println!("Skipping plpg/sq; code block since the source text could not be parsed for objects. {error}")
+                            }
                         }
                     }
                 }
             }
             Err(error) => {
-                println!("Skipping plpg/sql code block since the source text could not be parsed. {error}\n{}", code)
+                if is_verbose() {
+                    println!("Skipping plpg/sql code block since the source text could not be parsed. {error}\n")
+                }
             }
         }
     }
@@ -243,7 +262,9 @@ impl<'n> NodeIter<'n> {
                         "plpgsql" => match self.current_node.deparse() {
                             Ok(function_def) => self.parse_inline_plpgsql_code(&function_def),
                             Err(error) => {
-                                println!("Could not deparse plpg/sql function. {error}");
+                                if is_verbose() {
+                                    println!("Could not deparse plpg/sql function. {error}");
+                                }
                             }
                         },
                         "sql" => {
@@ -273,10 +294,12 @@ impl<'n> NodeIter<'n> {
                             }
                         }
                         _ => {
-                            println!(
-                                "Unknown language '{}' for function. Could not parse.",
-                                language.sval
-                            )
+                            if is_verbose() {
+                                println!(
+                                    "Unknown language '{}' for function. Could not parse.",
+                                    language.sval
+                                )
+                            }
                         }
                     }
                 };
@@ -293,10 +316,12 @@ impl<'n> NodeIter<'n> {
                 14 => self.parse_inline_sql_code(&inline_code_block.source_text),
                 13545 => self.parse_inline_plpgsql_code(&inline_code_block.source_text),
                 _ => {
-                    println!(
-                        "Skipping code block since the language is not supported. Lang ID = {}",
-                        inline_code_block.lang_oid
-                    )
+                    if is_verbose() {
+                        println!(
+                            "Skipping code block since the language is not supported. Lang ID = {}",
+                            inline_code_block.lang_oid
+                        )
+                    }
                 }
             },
             Node::AlterTypeStmt(alter_type) => {
@@ -309,7 +334,11 @@ impl<'n> NodeIter<'n> {
                 if let Some(query) = view.query.as_ref().and_then(|q| q.node.as_ref()) {
                     match query.deparse() {
                         Ok(query_text) => self.parse_inline_sql_code(&query_text),
-                        Err(error) => println!("Error trying to deparse view query. {error}"),
+                        Err(error) => {
+                            if is_verbose() {
+                                println!("Error trying to deparse view query. {error}")
+                            }
+                        }
                     }
                 }
             }
@@ -378,7 +407,7 @@ impl DdlStatement {
             .iter()
             .all(|d| completed_dependencies.contains(d))
     }
-    
+
     fn depends_on(&self, object: &SchemaQualifiedName) -> bool {
         self.dependencies.contains(object)
     }
@@ -402,16 +431,16 @@ impl StatementIter {
             failed_statement_index: 0,
         }
     }
-    
+
     fn add_back_failed_statement(&mut self, statement: DdlStatement) {
         self.completed_objects.remove(&statement.object);
         self.failed_statements.push(statement);
     }
-    
+
     fn has_remaining(&self) -> bool {
         !self.statements.is_empty() || !self.failed_statements.is_empty()
     }
-    
+
     fn take_remaining(&mut self) -> Vec<DdlStatement> {
         let mut result = vec![];
         result.append(&mut self.statements);
@@ -427,28 +456,36 @@ impl Iterator for StatementIter {
         if self.statements.is_empty() && self.failed_statements.is_empty() {
             return None;
         }
-        
+
         if !self.statements.is_empty() {
-            if let Some(index) = find_index(&self.statements, |s| s.has_dependencies_met(&self.completed_objects)) {
+            if let Some(index) = find_index(&self.statements, |s| {
+                s.has_dependencies_met(&self.completed_objects)
+            }) {
                 let statement = self.statements.remove(index);
                 self.completed_objects.insert(statement.object.clone());
                 return Some(statement);
             }
-            if let Some(index) = find_index(&self.statements, |s| self.statements.iter().all(|other| !s.depends_on(&other.object))) {
+            if let Some(index) = find_index(&self.statements, |s| {
+                self.statements
+                    .iter()
+                    .all(|other| !s.depends_on(&other.object))
+            }) {
                 let statement = self.statements.remove(index);
                 self.completed_objects.insert(statement.object.clone());
                 return Some(statement);
             }
-            return Some(self.statements.remove(0))
+            return Some(self.statements.remove(0));
         }
-        
+
         if self.initial_failed_count == 0 {
             self.initial_failed_count = self.failed_statements.len();
             return Some(self.failed_statements.remove(self.failed_statement_index));
         }
-        
+
         self.failed_statement_index += 1;
-        self.failed_statement_index = self.failed_statement_index.clamp(0, self.failed_statements.len() - 1);
+        self.failed_statement_index = self
+            .failed_statement_index
+            .clamp(0, self.failed_statements.len() - 1);
         if self.failed_statement_index == 0 {
             if self.initial_failed_count == self.failed_statements.len() {
                 return None;
@@ -482,6 +519,7 @@ impl SourceControlDatabase {
     where
         P: AsRef<Path>,
     {
+        println!("Analyzing code within source control directory");
         let mut builder = SourceControlDatabase::new(pool);
         let mut entries = WalkDir::new(files_path).map(|entry| entry.map(|e| e.path()));
         while let Some(result) = entries.next().await {
@@ -490,15 +528,20 @@ impl SourceControlDatabase {
                 continue;
             }
             let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
-                println!("Skipping {:?}", path);
+                if is_verbose() {
+                    println!("Skipping {:?}", path);
+                }
                 continue;
             };
             if !file_name.ends_with(".pgsql") && !file_name.ends_with(".sql") {
-                println!("Skipping {:?}", file_name);
+                if is_verbose() {
+                    println!("Skipping {:?}", file_name);
+                }
                 continue;
             }
             builder.append_source_file(path).await?;
         }
+        println!("Done!");
         Ok(builder)
     }
 
@@ -672,6 +715,7 @@ impl SourceControlDatabase {
     }
 
     pub async fn apply_to_temp_database(&mut self) -> Result<(), PgDiffError> {
+        println!("Applying source control DDL statements to temp database");
         let query = include_str!("./../../queries/check_create_db_role.pgsql");
         let can_create_database: bool = query_scalar(query).fetch_one(&self.pool).await?;
         if !can_create_database {
@@ -681,7 +725,9 @@ impl SourceControlDatabase {
         let db_options = DatabaseOptions::from_connection(&self.pool).await?;
         let create_database = format!("CREATE DATABASE {}{};", self.temp_db_name, db_options);
         sqlx::query(&create_database).execute(&self.pool).await?;
-        println!("Created temp database: {}", self.temp_db_name);
+        if is_verbose() {
+            println!("Created temp database: {}", self.temp_db_name);
+        }
         let db_options = (*self.pool.connect_options())
             .clone()
             .database(&self.temp_db_name);
@@ -695,11 +741,16 @@ impl SourceControlDatabase {
                     Error::Database(db_error) => {
                         let pg_error = db_error.downcast_ref::<PgDatabaseError>();
                         let message = pg_error.message();
-                        let Some(item) = self.statements.iter_mut().find(|s| **s == statement) else {
+                        let Some(item) = self.statements.iter_mut().find(|s| **s == statement)
+                        else {
                             return Err(error.into());
                         };
                         if message.ends_with(" does not exist") {
-                            let name: String = message.chars().skip_while(|c| *c == '"').take_while(|c| *c == '"').collect();
+                            let name: String = message
+                                .chars()
+                                .skip_while(|c| *c == '"')
+                                .take_while(|c| *c == '"')
+                                .collect();
                             let dependency = SchemaQualifiedName::from(name.trim_matches('"'));
                             item.dependencies.push(dependency);
                         }
@@ -710,16 +761,24 @@ impl SourceControlDatabase {
                 }
             }
             i += 1;
-            println!("Statement {}/{}\n", i, self.statements.len());
+            if is_verbose() {
+                println!("Statement {}/{}\n", i, self.statements.len());
+            }
         }
         if iter.has_remaining() {
-            let remaining_statements = iter.take_remaining().into_iter().map(|s| s.statement).collect();
-            return Err(PgDiffError::SourceControlScript { remaining_statements });
+            let remaining_statements = iter
+                .take_remaining()
+                .into_iter()
+                .map(|s| s.statement)
+                .collect();
+            return Err(PgDiffError::SourceControlScript {
+                remaining_statements,
+            });
         }
-        println!("Done applying source control DDL statements to database");
+        println!("Done!");
         Ok(())
     }
-    
+
     async fn scrape_temp_database(&self) -> Result<Database, PgDiffError> {
         Database::from_connection(self.pool.clone()).await
     }
@@ -859,6 +918,10 @@ pub struct Database {
 
 impl Database {
     pub async fn from_connection(pool: PgPool) -> Result<Self, PgDiffError> {
+        println!(
+            "Scraping database {} for metadata",
+            pool.connect_options().get_database().unwrap_or_default()
+        );
         let mut schemas = get_schemas(&pool).await?;
         let schema_names: Vec<&str> = schemas
             .iter()
@@ -874,8 +937,7 @@ impl Database {
         let sequences = get_sequences(&pool, &schema_names).await?;
         let functions = get_functions(&pool, &schema_names).await?;
         let views = get_views(&pool, &schema_names).await?;
-        if let Some(index) = find_index(&schemas, |schema| schema.name.schema_name == "public")
-        {
+        if let Some(index) = find_index(&schemas, |schema| schema.name.schema_name == "public") {
             schemas.remove(index);
         }
         let mut database = Database {
@@ -892,6 +954,7 @@ impl Database {
             extensions: get_extensions(&pool).await?,
         };
         database.collect_additional_dependencies(&pool).await?;
+        println!("Done!");
         Ok(database)
     }
 
@@ -970,8 +1033,9 @@ impl Database {
         }
         Ok(())
     }
-    
+
     fn compare_to_other_database(&self, other: &Self) -> Result<String, PgDiffError> {
+        println!("Comparing source control database to actual database");
         let mut result = String::new();
         compare_object_groups(&self.schemas, &other.schemas, &mut result)?;
         compare_object_groups(&self.extensions, &other.extensions, &mut result)?;
@@ -984,6 +1048,7 @@ impl Database {
         compare_object_groups(&self.views, &other.views, &mut result)?;
         compare_object_groups(&self.functions, &other.functions, &mut result)?;
         compare_object_groups(&self.sequences, &other.sequences, &mut result)?;
+        println!("Done!");
         Ok(result)
     }
 }

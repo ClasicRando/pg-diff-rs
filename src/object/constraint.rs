@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
-use crate::object::{Dependency, IndexParameters, PgCatalog, SchemaQualifiedName, SqlObject};
+use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject};
 use crate::{write_join, PgDiffError};
 
 pub async fn get_constraints(
@@ -26,9 +26,8 @@ pub async fn get_constraints(
     Ok(constraints)
 }
 
-#[derive(Debug, Deserialize, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Deserialize, sqlx::FromRow)]
 pub struct Constraint {
-    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
@@ -40,7 +39,18 @@ pub struct Constraint {
     #[sqlx(json)]
     pub(crate) timing: ConstraintTiming,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
+}
+
+impl PartialEq for Constraint {
+    #[inline]
+    fn eq(&self, other: &Constraint) -> bool {
+        self.owner_table_name == other.owner_table_name
+            && self.name == other.name
+            && self.schema_qualified_name == other.schema_qualified_name
+            && self.constraint_type == other.constraint_type
+            && self.timing == other.timing && self.dependencies == other.dependencies
+    }
 }
 
 impl SqlObject for Constraint {
@@ -52,14 +62,7 @@ impl SqlObject for Constraint {
         "CONSTRAINT"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Constraint,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

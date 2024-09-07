@@ -1,6 +1,8 @@
 WITH custom_types AS (
-    SELECT ct.oid, ct.typtype, ct.typname, ct.typrelid, ct.typnamespace
+    SELECT ct.oid, ct.typtype, ct.typname, ct.typrelid, ctn.nspname
     FROM pg_catalog.pg_type AS ct
+    JOIN pg_catalog.pg_namespace AS ctn
+        ON ct.typnamespace = ctn.oid
     WHERE
         ct.typtype IN ('e','r')
         OR
@@ -34,8 +36,8 @@ WITH custom_types AS (
 		pg_get_viewdef(vc.oid) AS "query",
 		vc.reloptions AS "options",
 		ARRAY[JSON_OBJECT(
-            'oid': CAST(vn.oid AS INTEGER),
-            'catalog': 'pg_namespace'
+            'schema_name': quote_ident(vn.nspname),
+            'local_name': ''
         )] AS "dependencies"
 	FROM pg_catalog.pg_class AS vc
 	JOIN pg_catalog.pg_namespace AS vn
@@ -61,15 +63,17 @@ JOIN query_views AS v
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(
-            'oid': CAST(cd.oid AS integer),
-            'catalog': 'pg_class'
+            'schema_name': quote_ident(cd.nspname),
+            'local_name': quote_ident(cd.relname)
         )) AS "dependencies"
 	FROM (
-		SELECT DISTINCT cd.oid
+		SELECT DISTINCT cd.relname, cdn.nspname
 		FROM pg_catalog.pg_depend AS d
 		JOIN pg_catalog.pg_class AS cd
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = cd.oid
+		JOIN pg_catalog.pg_namespace AS cdn
+			ON cd.relnamespace = cdn.oid
 		WHERE
 			d.classid = 'pg_rewrite'::REGCLASS
 			AND d.objid = r.oid
@@ -80,11 +84,11 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
-            'oid': CAST(tyd.oid AS integer),
-            'catalog': 'pg_type'
+            'schema_name': quote_ident(tyd.nspname),
+            'local_name': quote_ident(tyd.typname)
         )) AS "dependencies"
     FROM (
-        SELECT DISTINCT tyd.oid
+        SELECT DISTINCT tyd.typname, tyd.nspname
         FROM pg_catalog.pg_depend AS d
         JOIN custom_types AS tyd
             ON d.refclassid = 'pg_type'::REGCLASS

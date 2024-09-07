@@ -5,7 +5,7 @@ use sqlx::{query_as, PgPool};
 
 use crate::PgDiffError;
 
-use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_policies(pool: &PgPool, schemas: &[Oid]) -> Result<Vec<Policy>, PgDiffError> {
     let tables_query = include_str!("./../../queries/policies.pgsql");
@@ -19,9 +19,8 @@ pub async fn get_policies(pool: &PgPool, schemas: &[Oid]) -> Result<Vec<Policy>,
     Ok(tables)
 }
 
-#[derive(Debug, PartialEq, sqlx::FromRow)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct Policy {
-    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     pub(crate) name: String,
     #[sqlx(json)]
@@ -35,7 +34,23 @@ pub struct Policy {
     pub(crate) using_expression: Option<String>,
     pub(crate) columns: Vec<String>,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
+}
+
+impl PartialEq for Policy {
+    #[inline]
+    fn eq(&self, other: &Policy) -> bool {
+        self.name == other.name
+            && self.schema_qualified_name == other.schema_qualified_name
+            && self.owner_table_name == other.owner_table_name
+            && self.is_permissive == other.is_permissive
+            && self.applies_to == other.applies_to
+            && self.command == other.command
+            && self.check_expression == other.check_expression
+            && self.using_expression == other.using_expression
+            && self.columns == other.columns
+            && self.dependencies == other.dependencies
+    }
 }
 
 impl SqlObject for Policy {
@@ -47,14 +62,7 @@ impl SqlObject for Policy {
         "POLICY"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Policy,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

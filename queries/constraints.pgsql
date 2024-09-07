@@ -179,15 +179,17 @@ FROM table_constraints AS tc
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(
-            'catalog': 'pg_class',
-            'oid': CAST(td.oid AS integer)
+            'schema_name': quote_ident(td.nspname),
+            'local_name': quote_ident(td.relname)
         )) AS "dependencies"
 	FROM (
-		SELECT DISTINCT td.oid
+		SELECT DISTINCT td.relname, tdn.nspname
 		FROM pg_catalog.pg_depend AS d
 		JOIN pg_catalog.pg_class AS td
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = td.oid
+		JOIN pg_catalog.pg_namespace AS tdn
+			ON td.relnamespace = tdn.oid
 		WHERE
 			d.classid = 'pg_constraint'::REGCLASS
 			AND d.objid = tc.oid

@@ -42,15 +42,15 @@ JOIN pg_catalog.pg_language AS pl
 CROSS JOIN LATERAL (
     SELECT
         ARRAY[JSON_OBJECT(
-            'oid': CAST(pn.oid AS INTEGER),
-            'catalog': 'pg_namespace'
+            'schema_name': quote_ident(pn.nspname),
+            'local_name': ''
         )] AS "dependencies"
 ) AS nd
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
-            'oid': CAST(pd.oid AS INTEGER),
-            'catalog': 'pg_proc'
+            'schema_name': quote_ident(pdn.nspname),
+            'local_name': quote_ident(pd.proname)
         )) AS "dependencies"
     FROM pg_catalog.pg_depend AS d
     JOIN pg_catalog.pg_proc AS pd
@@ -66,15 +66,17 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
 	SELECT
 	    ARRAY_AGG(JSON_OBJECT(
-            'catalog': 'pg_class',
-            'oid': CAST(td.oid AS integer)
+            'schema_name': quote_ident(td.nspname),
+            'local_name': quote_ident(td.relname)
         )) AS "dependencies"
 	FROM (
-		SELECT DISTINCT td.oid
+		SELECT DISTINCT td.relname, tdn.nspname
 		FROM pg_catalog.pg_depend AS d
 		JOIN pg_catalog.pg_class AS td
 			ON d.refclassid = 'pg_class'::REGCLASS
 			AND d.refobjid = td.oid
+        JOIN pg_catalog.pg_namespace AS tdn
+            ON td.relnamespace = tdn.oid
 		WHERE
             d.classid = 'pg_proc'::REGCLASS
             AND d.objid = p.oid
@@ -85,15 +87,17 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
     SELECT
         ARRAY_AGG(JSON_OBJECT(
-            'catalog': 'pg_type',
-            'oid': CAST(tyd.oid AS integer)
+            'schema_name': quote_ident(tyd.nspname),
+            'local_name': quote_ident(tyd.typname)
         )) AS "dependencies"
     FROM (
-        SELECT DISTINCT tyd.oid
+        SELECT DISTINCT tyd.typname, tydn.nspname
         FROM pg_catalog.pg_depend AS d
         JOIN pg_catalog.pg_type AS tyd
             ON d.refclassid = 'pg_type'::REGCLASS
             AND d.refobjid = tyd.oid
+        JOIN pg_catalog.pg_namespace AS tydn
+            ON tyd.typnamespace = tydn.oid
         WHERE
             d.classid = 'pg_proc'::REGCLASS
             AND d.objid = p.oid

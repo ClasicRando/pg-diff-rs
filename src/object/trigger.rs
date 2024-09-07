@@ -6,7 +6,7 @@ use sqlx::{query_as, PgPool};
 
 use crate::{write_join, PgDiffError};
 
-use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_triggers(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Trigger>, PgDiffError> {
     let triggers_query = include_str!("./../../queries/triggers.pgsql");
@@ -20,9 +20,8 @@ pub async fn get_triggers(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Trigger>,
     Ok(triggers)
 }
 
-#[derive(Debug, PartialEq, sqlx::FromRow)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct Trigger {
-    pub(crate) oid: Oid,
     pub(crate) table_oid: Oid,
     pub(crate) name: String,
     #[sqlx(json)]
@@ -40,7 +39,25 @@ pub struct Trigger {
     pub(crate) function_name: SchemaQualifiedName,
     pub(crate) function_args: Option<Vec<u8>>,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
+}
+
+impl PartialEq for Trigger {
+    #[inline]
+    fn eq(&self, other: &Trigger) -> bool {
+        self.name == other.name
+            && self.schema_qualified_name == other.schema_qualified_name
+            && self.owner_table_name == other.owner_table_name
+            && self.timing == other.timing
+            && self.events == other.events
+            && self.old_name == other.old_name
+            && self.new_name == other.new_name
+            && self.is_row_level == other.is_row_level
+            && self.when_expression == other.when_expression
+            && self.function_name == other.function_name
+            && self.function_args == other.function_args
+            && self.dependencies == other.dependencies
+    }
 }
 
 impl SqlObject for Trigger {
@@ -52,14 +69,7 @@ impl SqlObject for Trigger {
         "TRIGGER"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Trigger,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

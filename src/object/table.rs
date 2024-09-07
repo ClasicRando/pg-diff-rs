@@ -10,7 +10,7 @@ use crate::{map_join_slice, write_join, PgDiffError};
 
 use super::sequence::SequenceOptions;
 use super::{
-    compare_option_lists, Collation, Dependency, GenericObject, OptionListObject, PgCatalog,
+    compare_option_lists, Collation, GenericObject, OptionListObject,
     SchemaQualifiedName, SqlObject, StorageParameter, TableSpace, TablespaceCompare,
 };
 
@@ -52,7 +52,7 @@ pub async fn get_table_by_qualified_name(
     Ok(tables)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Table {
     pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
@@ -63,7 +63,22 @@ pub struct Table {
     pub(crate) partitioned_parent_table: Option<SchemaQualifiedName>,
     pub(crate) tablespace: Option<TableSpace>,
     pub(crate) with: Option<Vec<StorageParameter>>,
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
+}
+
+impl PartialEq for Table {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.columns == other.columns
+            && self.partition_key_def == other.partition_key_def
+            && self.partition_values == other.partition_values
+            && self.inherited_tables == other.inherited_tables
+            && self.partitioned_parent_table == other.partitioned_parent_table
+            && self.tablespace == other.tablespace
+            && self.with == other.with
+            && self.dependencies == other.dependencies
+    }
 }
 
 impl<'r> FromRow<'r, PgRow> for Table {
@@ -79,7 +94,7 @@ impl<'r> FromRow<'r, PgRow> for Table {
             row.try_get("partitioned_parent_table")?;
         let tablespace: Option<TableSpace> = row.try_get("tablespace")?;
         let with: Option<Vec<StorageParameter>> = row.try_get("with")?;
-        let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
+        let dependencies: Json<Vec<SchemaQualifiedName>> = row.try_get("dependencies")?;
         Ok(Self {
             oid,
             name: name.0,
@@ -106,14 +121,7 @@ impl SqlObject for Table {
         "TABLE"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Class,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

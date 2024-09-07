@@ -1,13 +1,10 @@
 use std::fmt::Write;
 
-use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
 use crate::{write_join, PgDiffError};
 
-use super::{
-    compare_option_lists, Dependency, OptionListObject, PgCatalog, SchemaQualifiedName, SqlObject,
-};
+use super::{compare_option_lists, OptionListObject, SchemaQualifiedName, SqlObject};
 
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
     let views_query = include_str!("./../../queries/views.pgsql");
@@ -23,14 +20,13 @@ pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgD
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct View {
-    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     pub(crate) columns: Option<Vec<String>>,
     pub(crate) query: String,
     pub(crate) options: Option<Vec<String>>,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl OptionListObject for View {}
@@ -44,14 +40,7 @@ impl SqlObject for View {
         "VIEW"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Class,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

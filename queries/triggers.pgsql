@@ -87,16 +87,7 @@ SELECT
     tt.when_expression AS when_expression,
     tt.function_name AS function_name,
     tt.tgargs AS function_args,
-    TO_JSONB(ARRAY[
-        JSON_OBJECT(
-            'catalog': 'pg_class',
-            'oid': CAST(tt.table_oid AS integer)
-        ),
-        JSON_OBJECT(
-            'catalog': 'pg_proc',
-            'oid': CAST(tt.function_oid AS integer)
-        )
-    ]) AS "dependencies"
+    TO_JSONB(ARRAY[owner_table_name, function_name]) AS "dependencies"
 FROM table_triggers tt
 WHERE
     tt.table_oid = ANY($1)

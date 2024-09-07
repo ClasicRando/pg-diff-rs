@@ -1,14 +1,13 @@
 use std::fmt::{Display, Formatter, Write};
 
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgRow;
 use sqlx::types::Json;
 use sqlx::{query_as, FromRow, PgPool, Row};
 
 use crate::PgDiffError;
 
-use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequence>, PgDiffError> {
     let sequence_query = include_str!("./../../queries/sequences.pgsql");
@@ -24,17 +23,15 @@ pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequen
 
 #[derive(Debug, PartialEq)]
 pub struct Sequence {
-    pub(crate) oid: Oid,
     pub(crate) name: SchemaQualifiedName,
     pub(crate) data_type: String,
     pub(crate) owner: Option<SequenceOwner>,
     pub(crate) sequence_options: SequenceOptions,
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl<'r> FromRow<'r, PgRow> for Sequence {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let oid: Oid = row.try_get("oid")?;
         let name: Json<SchemaQualifiedName> = row.try_get("name")?;
         let data_type = row.try_get("data_type")?;
         let owner: Option<Json<SequenceOwner>> = row.try_get("owner")?;
@@ -46,9 +43,8 @@ impl<'r> FromRow<'r, PgRow> for Sequence {
             cache: row.try_get("cache")?,
             is_cycle: row.try_get("is_cycle")?,
         };
-        let dependencies: Json<Vec<Dependency>> = row.try_get("dependencies")?;
+        let dependencies: Json<Vec<SchemaQualifiedName>> = row.try_get("dependencies")?;
         Ok(Self {
-            oid,
             name: name.0,
             data_type,
             owner: owner.map(|j| j.0),
@@ -67,14 +63,7 @@ impl SqlObject for Sequence {
         "SEQUENCE"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Class,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 
@@ -188,7 +177,6 @@ impl SequenceOptions {
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SequenceOwner {
-    pub(crate) oid: Oid,
     pub(crate) table_name: SchemaQualifiedName,
     pub(crate) column_name: String,
 }

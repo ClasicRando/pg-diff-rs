@@ -1,11 +1,10 @@
 use std::fmt::Write;
 
-use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
 use crate::PgDiffError;
 
-use super::{Dependency, PgCatalog, SchemaQualifiedName, SqlObject};
+use super::{SchemaQualifiedName, SqlObject};
 
 pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
     let extensions_query = include_str!("./../../queries/extensions.pgsql");
@@ -21,14 +20,13 @@ pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Extension {
-    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     pub(crate) version: String,
     pub(crate) schema_name: String,
     pub(crate) is_relocatable: bool,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl SqlObject for Extension {
@@ -40,14 +38,7 @@ impl SqlObject for Extension {
         "EXTENSION"
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: Oid(0),
-            catalog: PgCatalog::Extension,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 

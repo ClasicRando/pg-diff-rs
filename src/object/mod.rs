@@ -1,10 +1,11 @@
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::{Debug, Display, Formatter, Write};
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 
 use constraint::{get_constraints, Constraint};
-pub use database::{DatabaseMigration, Database};
+pub use database::{Database, DatabaseMigration};
 use extension::{get_extensions, Extension};
 use function::{get_functions, Function};
 use index::{get_indexes, Index};
@@ -43,6 +44,19 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "pg_notify",
     "format",
 ];
+
+static VERBOSE_FLAG: OnceLock<bool> = OnceLock::new();
+
+pub fn set_verbose_flag(value: bool) {
+    VERBOSE_FLAG.get_or_init(|| value);
+}
+
+fn is_verbose() -> bool {
+    if let Some(flag) = VERBOSE_FLAG.get() {
+       return *flag; 
+    }
+    false
+}
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
@@ -89,8 +103,7 @@ impl Display for IndexParameters {
 trait SqlObject: PartialEq {
     fn name(&self) -> &SchemaQualifiedName;
     fn object_type_name(&self) -> &str;
-    fn dependency_declaration(&self) -> Dependency;
-    fn dependencies(&self) -> &[Dependency];
+    fn dependencies(&self) -> &[SchemaQualifiedName];
     /// Create the `CREATE` statement for this object
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `ALTER` statement(s) required for this SQL object to be migrated to the new state
@@ -102,28 +115,38 @@ trait SqlObject: PartialEq {
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `DROP` statement for this object
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
-    fn dependencies_met(&self, completed_objects: &[Dependency]) -> bool {
+    fn dependencies_met(&self, completed_objects: &[SchemaQualifiedName]) -> bool {
         self.dependencies()
             .iter()
             .all(|d| completed_objects.contains(d))
     }
 }
 
-fn compare_object_groups<S, W>(old_objects: &[S], new_objects: &[S], writer: &mut W) -> Result<(), PgDiffError>
+fn compare_object_groups<S, W>(
+    old_objects: &[S],
+    new_objects: &[S],
+    writer: &mut W,
+) -> Result<(), PgDiffError>
 where
-    S: SqlObject,
-    W: Write
+    S: SqlObject + Debug,
+    W: Write,
 {
     for existing_object in old_objects {
-        match new_objects.iter().find(|s| s.name() == existing_object.name()) {
-            Some(new_schema) if existing_object != new_schema => {
-                existing_object.alter_statements(new_schema, writer)?
-            },
+        match new_objects
+            .iter()
+            .find(|s| s.name() == existing_object.name())
+        {
+            Some(new_object) if existing_object != new_object => {
+                existing_object.alter_statements(new_object, writer)?
+            }
             None => existing_object.drop_statements(writer)?,
             _ => {}
         }
     }
-    for new_object in new_objects.iter().filter(|s| !old_objects.contains(s)) {
+    for new_object in new_objects
+        .iter()
+        .filter(|s| !old_objects.iter().any(|o| o.name() == s.name()))
+    {
         new_object.create_statements(writer)?;
     }
     Ok(())
@@ -323,8 +346,6 @@ struct Dependency {
 struct GenericObject {
     #[sqlx(json)]
     name: SchemaQualifiedName,
-    #[sqlx(json)]
-    dependency: Dependency,
 }
 
 fn find_index<T, F>(slice: &[T], predicate: F) -> Option<usize>

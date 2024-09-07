@@ -3,7 +3,6 @@ use std::fmt::{Display, Formatter, Write};
 
 use lazy_regex::regex;
 use sqlx::error::BoxDynError;
-use sqlx::postgres::types::Oid;
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
 use sqlx::{query_as, Decode, PgPool, Postgres};
 
@@ -12,8 +11,8 @@ use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
 use super::{
-    compare_option_lists, Dependency, GenericObject, OptionListObject, PgCatalog,
-    SchemaQualifiedName, SqlObject,
+    compare_option_lists, is_verbose, GenericObject, OptionListObject, SchemaQualifiedName,
+    SqlObject,
 };
 
 const PUBLIC_SCHEMA_NAME: &str = "public";
@@ -143,7 +142,6 @@ impl<'s> Display for FunctionArgument<'s> {
 
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Function {
-    pub(crate) oid: Oid,
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
     pub(crate) is_procedure: bool,
@@ -164,7 +162,7 @@ pub struct Function {
     pub(crate) config: Option<Vec<String>>,
     pub(crate) is_pre_parsed: bool,
     #[sqlx(json)]
-    pub(crate) dependencies: Vec<Dependency>,
+    pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
 impl Function {
@@ -197,7 +195,9 @@ impl Function {
                 let result: Vec<PlPgSqlFunction> = match parse_plpgsql_function(&block) {
                     Ok(inner) => inner,
                     Err(error) => {
-                        println!("Object Name: {}. {error}\n", self.name);
+                        if is_verbose() {
+                            println!("Object Name: {}. {error}\n", self.name);
+                        }
                         return Ok(());
                     }
                 };
@@ -205,7 +205,9 @@ impl Function {
                     let names = match function.get_objects() {
                         Ok(inner) => inner,
                         Err(error) => {
-                            println!("Could not get dependencies of dynamic function {} due to object extraction error. {error}", self.name);
+                            if is_verbose() {
+                                println!("Could not get dependencies of dynamic function {} due to object extraction error. {error}", self.name);
+                            }
                             return Ok(());
                         }
                     };
@@ -235,17 +237,21 @@ impl Function {
                 if object.name.schema_name == PG_CATALOG_SCHEMA_NAME {
                     return;
                 }
-                println!(
-                    "Adding {} as dependency {:?} for dynamic function {}",
-                    object.name, object.dependency, self.name
-                );
-                self.dependencies.push(object.dependency);
+                if is_verbose() {
+                    println!(
+                        "Adding {} as dependency for dynamic function {}",
+                        object.name, self.name
+                    );
+                }
+                self.dependencies.push(object.name.clone());
             }
             [] => {
-                println!(
-                    "Could not match object {name} to an object for {}. Skipping for now.",
-                    self.name
-                )
+                if is_verbose() {
+                    println!(
+                        "Could not match object {name} to an object for {}. Skipping for now.",
+                        self.name
+                    )
+                }
             }
             objects => {
                 if objects
@@ -254,11 +260,13 @@ impl Function {
                 {
                     return;
                 }
-                println!(
-                    "Found multiple matches for {name} to an object for {}. {:?}",
-                    self.name,
-                    objects.iter().map(|o| o.name.clone()).collect::<Vec<_>>()
-                );
+                if is_verbose() {
+                    println!(
+                        "Found multiple matches for {name} to an object for {}. {:?}",
+                        self.name,
+                        objects.iter().map(|o| o.name.clone()).collect::<Vec<_>>()
+                    );
+                }
             }
         }
     }
@@ -403,14 +411,7 @@ impl SqlObject for Function {
         }
     }
 
-    fn dependency_declaration(&self) -> Dependency {
-        Dependency {
-            oid: self.oid,
-            catalog: PgCatalog::Proc,
-        }
-    }
-
-    fn dependencies(&self) -> &[Dependency] {
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
         &self.dependencies
     }
 
