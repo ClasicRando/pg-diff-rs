@@ -719,7 +719,7 @@ impl SourceControlDatabase {
         let query = include_str!("./../../queries/check_create_db_role.pgsql");
         let can_create_database: bool = query_scalar(query).fetch_one(&self.pool).await?;
         if !can_create_database {
-            return Err(PgDiffError::General("Current user does not have permission to create a temp database for migration staging".to_string()));
+            return Err("Current user does not have permission to create a temp database for migration staging".into());
         }
 
         let db_options = DatabaseOptions::from_connection(&self.pool).await?;

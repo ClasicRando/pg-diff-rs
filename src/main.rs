@@ -44,6 +44,12 @@ pub enum PgDiffError {
     SourceControlScript { remaining_statements: Vec<String> },
 }
 
+impl From<&str> for PgDiffError {
+    fn from(value: &str) -> Self {
+        Self::General(value.to_string())
+    }
+}
+
 fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>(
     slice: &[I],
     map: F,

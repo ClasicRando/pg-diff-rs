@@ -365,9 +365,7 @@ impl Function {
                 if let Some(bin_info) = &self.bin_info {
                     writeln!(w, "AS '{bin_info}', '{}';", self.source)?
                 } else {
-                    return Err(PgDiffError::General(
-                        "C Function is missing required pg_proc.probin value".to_string(),
-                    ));
+                    return Err("C Function is missing required pg_proc.probin value".into());
                 }
             }
             _ => {
