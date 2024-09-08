@@ -132,7 +132,7 @@ async fn main() -> Result<(), PgDiffError> {
                 connect_options = connect_options.password(&password);
             }
             let pool = PgPool::connect_with(connect_options).await?;
-            let database = Database::from_connection(pool).await?;
+            let database = Database::from_connection(&pool).await?;
             database.script_out(output_path).await?;
         }
         Commands::Migrate { .. } => {

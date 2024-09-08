@@ -13,16 +13,17 @@ use sqlx::{query_as, query_scalar, Error, PgPool};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::object::plpgsql::parse_plpgsql_function;
-use crate::object::policy::{get_policies, Policy};
 use crate::object::{
     compare_object_groups, find_index, get_constraints, get_extensions, get_functions, get_indexes,
-    get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views, is_verbose,
-    Constraint, Extension, Function, Index, Schema, SchemaQualifiedName, Sequence, SqlObject,
-    Table, Trigger, Udt, View, BUILT_IN_FUNCTIONS, BUILT_IN_NAMES,
+    get_policies, get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views,
+    is_verbose, plpgsql::parse_plpgsql_function, Constraint, Extension, Function, Index, Policy,
+    Schema, SchemaQualifiedName, Sequence, SqlObject, Table, Trigger, Udt, View,
+    BUILT_IN_FUNCTIONS, BUILT_IN_NAMES,
 };
 use crate::PgDiffError;
 
+/// Main object of the application that contains metadata about the targeted database and the source
+/// control SQL files provided.
 pub struct DatabaseMigration {
     pool: PgPool,
     database: Database,
@@ -30,13 +31,20 @@ pub struct DatabaseMigration {
 }
 
 impl DatabaseMigration {
+    /// Create a new [DatabaseMigration] using the connection `pool` provided to scrape metadata
+    /// from the target database and the `source_control_directory` to collect source control SQL
+    /// files for generating the desired new state of the target database.
+    ///
+    /// # Errors
+    /// if database scraping fails (see [Database::from_connection]) or source control file
+    /// analyzing fails (see [SourceControlDatabase::from_directory]).
     pub async fn new<P>(pool: PgPool, source_control_directory: P) -> Result<Self, PgDiffError>
     where
         P: AsRef<Path>,
     {
-        let database = Database::from_connection(pool.clone()).await?;
+        let database = Database::from_connection(&pool).await?;
         let source_control_database =
-            SourceControlDatabase::from_directory(pool.clone(), source_control_directory).await?;
+            SourceControlDatabase::from_directory(source_control_directory).await?;
         Ok(Self {
             pool,
             database,
@@ -44,16 +52,52 @@ impl DatabaseMigration {
         })
     }
 
+    /// Plan the steps required to migrate the target database to the state described in the source
+    /// control files.
+    ///
+    /// This applies the source control statements to a temp database, scrapes that temp database
+    /// for metadata and compares the temp database to the current state of the target database to
+    /// find the steps required for migration.
+    ///
+    /// # Errors
+    /// See [SourceControlDatabase::apply_to_temp_database]
+    /// See [SourceControlDatabase::scrape_temp_database]
     pub async fn plan_migration(&mut self) -> Result<String, PgDiffError> {
+        self.create_temp_database().await?;
+        let db_options = (*self.pool.connect_options())
+            .clone()
+            .database(&self.source_control_database.temp_db_name);
+        let temp_db_pool = PgPool::connect_with(db_options).await?;
         self.source_control_database
-            .apply_to_temp_database()
+            .apply_to_temp_database(&temp_db_pool)
             .await?;
-        let source_control_temp_database =
-            self.source_control_database.scrape_temp_database().await?;
+        let source_control_temp_database = Database::from_connection(&temp_db_pool).await?;
         let migration_script = self
             .database
             .compare_to_other_database(&source_control_temp_database)?;
         Ok(migration_script)
+    }
+
+    async fn create_temp_database(&self) -> Result<(), PgDiffError> {
+        let query = include_str!("./../../queries/check_create_db_role.pgsql");
+        let can_create_database: bool = query_scalar(query).fetch_one(&self.pool).await?;
+        if !can_create_database {
+            return Err("Current user does not have permission to create a temp database for migration staging".into());
+        }
+
+        let db_options = DatabaseOptions::from_connection(&self.pool).await?;
+        let create_database = format!(
+            "CREATE DATABASE {}{};",
+            self.source_control_database.temp_db_name, db_options
+        );
+        sqlx::query(&create_database).execute(&self.pool).await?;
+        if is_verbose() {
+            println!(
+                "Created temp database: {}",
+                self.source_control_database.temp_db_name
+            );
+        }
+        Ok(())
     }
 }
 
@@ -391,21 +435,6 @@ struct DdlStatement {
 }
 
 impl DdlStatement {
-    fn new<S>(statement: &str, name: S) -> Self
-    where
-        S: Into<SchemaQualifiedName>,
-    {
-        Self {
-            statement: statement.to_owned(),
-            object: name.into(),
-            dependencies: vec![],
-        }
-    }
-
-    fn add_dependency(&mut self, name: SchemaQualifiedName) {
-        self.dependencies.push(name);
-    }
-
     fn has_dependencies_met(&self, completed_dependencies: &HashSet<SchemaQualifiedName>) -> bool {
         self.dependencies
             .iter()
@@ -503,28 +532,26 @@ impl Iterator for StatementIter {
 #[derive(Debug)]
 pub struct SourceControlDatabase {
     temp_db_name: String,
-    pool: PgPool,
     statements: Vec<DdlStatement>,
 }
 
 impl SourceControlDatabase {
-    fn new(pool: PgPool) -> Self {
+    fn new() -> Self {
         Self {
             temp_db_name: format!(
                 "pg_diff_rs_{}",
                 Uuid::new_v4().to_string().replace("-", "_")
             ),
-            pool,
             statements: vec![],
         }
     }
 
-    pub async fn from_directory<P>(pool: PgPool, files_path: P) -> Result<Self, PgDiffError>
+    pub async fn from_directory<P>(files_path: P) -> Result<Self, PgDiffError>
     where
         P: AsRef<Path>,
     {
         println!("Analyzing code within source control directory");
-        let mut builder = SourceControlDatabase::new(pool);
+        let mut builder = SourceControlDatabase::new();
         let mut entries = WalkDir::new(files_path).map(|entry| entry.map(|e| e.path()));
         while let Some(result) = entries.next().await {
             let path = result?;
@@ -549,6 +576,21 @@ impl SourceControlDatabase {
         Ok(builder)
     }
 
+    /// Read source file and find all queries, the main DDL object of each query and the
+    /// dependencies for each DDL query.
+    ///
+    /// The steps are as follows:
+    /// 1. Read the entire source control file into a string buffer.
+    /// 2. Split the source file statements into 1 or more queries.
+    /// 3. Parse each query extracting:
+    ///     * Root node of the query for further analyzing
+    ///     * Main object created/altered by the query (found from the root node)
+    ///     * All dependencies of the query (found by expanding [NodeIter])
+    ///
+    /// # Errors
+    /// If an IO error occurs trying to read the file path or an error occurs attempting to read the
+    /// AST returned from query parsing. Querying parsing can fail for various reasons, but it
+    /// should only fail if the SQL code is not syntactically valid.
     async fn append_source_file<P>(&mut self, path: P) -> Result<(), PgDiffError>
     where
         P: AsRef<Path>,
@@ -577,7 +619,7 @@ impl SourceControlDatabase {
                 .first()
                 .and_then(|s| s.stmt.as_ref())
                 .and_then(|n| n.node.as_ref());
-            let root_node = extract_option(
+            let root_node = *extract_option(
                 &path,
                 &root_node,
                 format!(
@@ -707,64 +749,73 @@ impl SourceControlDatabase {
                     });
                 }
             };
-            let mut statement = DdlStatement::new(query, parent_object);
-            for item in NodeIter::new(root_node) {
-                statement.add_dependency(item.clone());
-            }
-
+            let statement = DdlStatement {
+                statement: query.to_string(),
+                object: parent_object,
+                dependencies: NodeIter::new(root_node).collect(),
+            };
             self.statements.push(statement);
         }
 
         Ok(())
     }
 
-    pub async fn apply_to_temp_database(&mut self) -> Result<(), PgDiffError> {
+    /// Apply statements collected from SQL source control files and apply them to the database
+    /// targeted by the supplied `pool`.
+    ///
+    /// This creates a [StatementIter] referencing the `statements` collected. The order of
+    /// statements follows all objects whose dependencies have already been met (or no dependencies
+    /// exist). As objects are created, the collection of dependencies created will be updated and
+    /// statements that were previously not able to created, are then released for execution. If
+    /// an error occurs during query execution, the statement is put into a special queue of failed
+    /// statements that will be handled later. For failed statements, the error message is also
+    /// checked to see if the missing dependency is specified and if found, the dependency is added
+    /// to the object's list of dependencies before pushing to error statement queue.
+    ///
+    /// After iteration completes, the iterator object is checked to see if any statements remain
+    /// which would indicate some of the statements could not be executed successfully (i.e. a
+    /// circular dependency was found or the application could not derive the order of the
+    /// statements to create the database state).
+    ///
+    /// For more details of iteration, see [StatementIter].
+    ///
+    /// # Errors
+    /// - Executing the statement query returns an error that cannot be parsed into a
+    ///     [PgDatabaseError]
+    /// - After iterating over the ordered statements, the iterator still has remaining statements.
+    ///     This would indicate that an infinite loop was detected and the application cannot
+    ///     continue
+    pub async fn apply_to_temp_database(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
         println!("Applying source control DDL statements to temp database");
         println!("Temp Database Name: {}", self.temp_db_name);
         println!("Total statements: {}", self.statements.len());
-        let query = include_str!("./../../queries/check_create_db_role.pgsql");
-        let can_create_database: bool = query_scalar(query).fetch_one(&self.pool).await?;
-        if !can_create_database {
-            return Err("Current user does not have permission to create a temp database for migration staging".into());
-        }
-
-        let db_options = DatabaseOptions::from_connection(&self.pool).await?;
-        let create_database = format!("CREATE DATABASE {}{};", self.temp_db_name, db_options);
-        sqlx::query(&create_database).execute(&self.pool).await?;
-        if is_verbose() {
-            println!("Created temp database: {}", self.temp_db_name);
-        }
-        let db_options = (*self.pool.connect_options())
-            .clone()
-            .database(&self.temp_db_name);
-        self.pool = PgPool::connect_with(db_options).await?;
 
         let mut iter = StatementIter::new(&self.statements);
         let mut i = 0;
         while let Some(statement) = iter.next() {
-            if let Err(error) = sqlx::query(&statement.statement).execute(&self.pool).await {
-                match &error {
-                    Error::Database(db_error) => {
-                        let pg_error = db_error.downcast_ref::<PgDatabaseError>();
-                        let message = pg_error.message();
-                        let Some(item) = self.statements.iter_mut().find(|s| **s == statement)
-                        else {
-                            return Err(error.into());
-                        };
-                        if message.ends_with(" does not exist") {
-                            let name: String = message
-                                .chars()
-                                .skip_while(|c| *c == '"')
-                                .take_while(|c| *c == '"')
-                                .collect();
-                            let dependency = SchemaQualifiedName::from(name.trim_matches('"'));
-                            item.dependencies.push(dependency);
-                        }
-                        iter.add_back_failed_statement(item.clone());
-                        continue;
-                    }
-                    _ => return Err(error.into()),
+            if let Err(error) = sqlx::query(&statement.statement).execute(pool).await {
+                let Error::Database(db_error) = &error else {
+                    return Err(error.into());
+                };
+                let Some(pg_error) = db_error.try_downcast_ref::<PgDatabaseError>() else {
+                    return Err(error.into());
+                };
+                let Some(item) = self.statements.iter_mut().find(|s| **s == statement) else {
+                    iter.add_back_failed_statement(statement);
+                    continue;
+                };
+                let message = pg_error.message();
+                if message.ends_with(" does not exist") {
+                    let name: String = message
+                        .chars()
+                        .skip_while(|c| *c == '"')
+                        .take_while(|c| *c == '"')
+                        .collect();
+                    let dependency = SchemaQualifiedName::from(name.trim_matches('"'));
+                    item.dependencies.push(dependency);
                 }
+                iter.add_back_failed_statement(item.clone());
+                continue;
             }
             i += 1;
             if is_verbose() {
@@ -784,12 +835,17 @@ impl SourceControlDatabase {
         println!("Done!");
         Ok(())
     }
-
-    async fn scrape_temp_database(&self) -> Result<Database, PgDiffError> {
-        Database::from_connection(self.pool.clone()).await
-    }
 }
 
+/// Extract the schema qualified name(s) from the list of `name_nodes` supplied. This assumes that
+/// each list item node is a node containing a [Node::String].
+///
+/// Returns a [SchemaQualifiedName] if a name can be extracted. Returns [None] when:
+/// - the schema name is `pg_catalog`
+/// - the name has no schema + the local name is in [BUILT_IN_NAMES] or [BUILT_IN_FUNCTIONS]
+/// - there are no nodes in the list
+///
+/// See [extract_string].
 fn extract_names(name_nodes: &[pg_query::protobuf::Node]) -> Option<SchemaQualifiedName> {
     match name_nodes {
         [schema_name, local_name] => {
@@ -813,6 +869,8 @@ fn extract_names(name_nodes: &[pg_query::protobuf::Node]) -> Option<SchemaQualif
     }
 }
 
+/// Extract the string contained within the `node`. Returns [None] if the `node` does not point to
+/// anything or the inner node is not [Node::String]. Otherwise, the inner string is returned.
 fn extract_string(node: &pg_query::protobuf::Node) -> Option<&String> {
     match &node.node {
         Some(pg_query::NodeEnum::String(pg_query::protobuf::String { sval, .. })) => Some(sval),
@@ -820,6 +878,8 @@ fn extract_string(node: &pg_query::protobuf::Node) -> Option<&String> {
     }
 }
 
+/// Extract a reference to the value within the `option` if it's [Some]. If the value is [None],
+/// return a [PgDiffError::FileQueryParse] with the `path` and `message`.
 fn extract_option<P, I>(path: P, option: &Option<I>, message: String) -> Result<&I, PgDiffError>
 where
     P: AsRef<Path>,
@@ -830,6 +890,8 @@ where
     })
 }
 
+/// Contains the LOCAL_PROVIDER database option as well as the other allowed options based upon the
+/// specific provider type.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum LocalProvider {
@@ -846,6 +908,8 @@ enum LocalProvider {
 }
 
 impl Display for LocalProvider {
+    /// Write the LOCAL_PROVIDER option as well as the other options allowed with the specific
+    /// [LocalProvider]
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             LocalProvider::Libc {
@@ -876,6 +940,7 @@ impl Display for LocalProvider {
     }
 }
 
+/// Database options that can be supplied when executing a `CREATE DATABASE` command
 #[derive(Debug, sqlx::FromRow)]
 struct DatabaseOptions {
     encoding: String,
@@ -886,6 +951,7 @@ struct DatabaseOptions {
 }
 
 impl Display for DatabaseOptions {
+    /// Write the `CREATE DATABASE` options specified by this struct
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -900,6 +966,7 @@ impl Display for DatabaseOptions {
 }
 
 impl DatabaseOptions {
+    /// Capture the pool's current database's options
     async fn from_connection(pool: &PgPool) -> Result<Self, PgDiffError> {
         let query = include_str!("./../../queries/database.pgsql");
         let db_options = query_as(query).fetch_one(pool).await?;
@@ -907,6 +974,9 @@ impl DatabaseOptions {
     }
 }
 
+/// Struct representing all database objects that can be found within a target database. This
+/// ignores objects that are directly owned by extensions and does not include the public schema
+/// which is already present within a database.
 #[derive(Debug)]
 pub struct Database {
     pub(crate) schemas: Vec<Schema>,
@@ -923,26 +993,37 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn from_connection(pool: PgPool) -> Result<Self, PgDiffError> {
+    /// Create a new [Database] from the database targeted by the supplied `pool`.
+    ///
+    /// Collect all available metadata about the database form the `pg_catalog` tables/views as well
+    /// as attempting to analyze non-compiled functions (i.e. dynamic sql and pl/pgsql functions)
+    /// to figured out dependencies. Function analysis is not guaranteed to work so errors are
+    /// written to STDOUT if the verbose flag is active.
+    ///
+    /// # Errors
+    /// - Errors from the SQL queries executed to fetch metadata
+    /// - SQL query parsing if a function is a dynamic SQL query but the query is invalid
+    /// - A function is not SQL or pl/pgsql (other languages are not supported)
+    pub async fn from_connection(pool: &PgPool) -> Result<Self, PgDiffError> {
         println!(
             "Scraping database {} for metadata",
             pool.connect_options().get_database().unwrap_or_default()
         );
-        let mut schemas = get_schemas(&pool).await?;
+        let mut schemas = get_schemas(pool).await?;
         let schema_names: Vec<&str> = schemas
             .iter()
             .map(|s| s.name.schema_name.as_str())
             .collect();
-        let udts = get_udts(&pool, &schema_names).await?;
-        let tables = get_tables(&pool, &schema_names).await?;
+        let udts = get_udts(pool, &schema_names).await?;
+        let tables = get_tables(pool, &schema_names).await?;
         let table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
-        let policies = get_policies(&pool, &table_oids).await?;
-        let constraints = get_constraints(&pool, &table_oids).await?;
-        let indexes = get_indexes(&pool, &table_oids).await?;
-        let triggers = get_triggers(&pool, &table_oids).await?;
-        let sequences = get_sequences(&pool, &schema_names).await?;
-        let functions = get_functions(&pool, &schema_names).await?;
-        let views = get_views(&pool, &schema_names).await?;
+        let policies = get_policies(pool, &table_oids).await?;
+        let constraints = get_constraints(pool, &table_oids).await?;
+        let indexes = get_indexes(pool, &table_oids).await?;
+        let triggers = get_triggers(pool, &table_oids).await?;
+        let sequences = get_sequences(pool, &schema_names).await?;
+        let functions = get_functions(pool, &schema_names).await?;
+        let views = get_views(pool, &schema_names).await?;
         if let Some(index) = find_index(&schemas, |schema| schema.name.schema_name == "public") {
             schemas.remove(index);
         }
@@ -957,20 +1038,36 @@ impl Database {
             sequences,
             functions,
             views,
-            extensions: get_extensions(&pool).await?,
+            extensions: get_extensions(pool).await?,
         };
-        database.collect_additional_dependencies(&pool).await?;
+        for function in database.functions.iter_mut() {
+            function.extract_more_dependencies(pool).await?;
+        }
         println!("Done!");
         Ok(database)
     }
 
-    async fn collect_additional_dependencies(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
-        for function in self.functions.iter_mut() {
-            function.extract_more_dependencies(pool).await?;
-        }
-        Ok(())
-    }
-
+    /// Use the metadata scraped from the database to create SQL source control files in the
+    /// `output_path` provided.
+    ///
+    /// This creates files in subdirectories:
+    /// - schema, 1 per schema
+    /// - extension, 1 per extension
+    /// - composite, 1 per composite UDT
+    /// - enum, 1 per enum UDT
+    /// - table, 1 per table with all constraints, indexes, triggers and policies owned by the table
+    ///     included in this file
+    /// - view, 1 per view
+    /// - sequence, 1 per sequence
+    /// - function, 1 per function
+    /// - procedure, 1 per procedure
+    ///
+    /// # Errors
+    /// - General format errors when attempting to write the statements to a string buffer
+    /// - General IO errors when writing the string buffer to the file
+    ///
+    /// See [write_create_statements_to_file]
+    /// See [append_create_statements_to_owner_table_file]
     pub async fn script_out<P>(&self, output_path: P) -> Result<(), PgDiffError>
     where
         P: AsRef<Path>,
@@ -1040,6 +1137,8 @@ impl Database {
         Ok(())
     }
 
+    /// Compare this database to another database. Assumes the other database is the desired state
+    /// of the database and this object is the current state that needs to be migrated.
     fn compare_to_other_database(&self, other: &Self) -> Result<String, PgDiffError> {
         println!("Comparing source control database to actual database");
         let mut result = String::new();
@@ -1059,7 +1158,7 @@ impl Database {
     }
 }
 
-/// Write create statements to file
+/// Write `CREATE` statements to the file specified by the object type and name
 pub async fn write_create_statements_to_file<S, P>(
     object: &S,
     root_directory: P,
@@ -1080,6 +1179,7 @@ where
     Ok(())
 }
 
+/// Append the `CREATE` statements to the owning table's file
 pub async fn append_create_statements_to_owner_table_file<S, P>(
     object: &S,
     owner_table: &SchemaQualifiedName,
