@@ -44,7 +44,11 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "format",
 ];
 
-fn write_join_iter<W, D, I>(write: &mut W, mut iter: I, separator: &str) -> Result<(), std::fmt::Error>
+fn write_join_iter<W, D, I>(
+    write: &mut W,
+    mut iter: I,
+    separator: &str,
+) -> Result<(), std::fmt::Error>
 where
     W: Write,
     D: Display,
@@ -184,6 +188,79 @@ where
         new_object.create_statements(writer)?;
     }
     Ok(())
+}
+
+pub enum ObjectComparison<'o, S>
+where
+    S: SqlObject,
+{
+    Alter {
+        existing_object: &'o S,
+        new_object: &'o S,
+    },
+    Drop {
+        existing_object: &'o S,
+    },
+    Create {
+        new_object: &'o S,
+    },
+}
+
+impl<'o, S> ObjectComparison<'o, S>
+where
+    S: SqlObject,
+{
+    fn write_statements<W>(&self, writer: &mut W) -> Result<(), PgDiffError>
+    where
+        W: Write,
+    {
+        match self {
+            ObjectComparison::Alter {
+                existing_object,
+                new_object,
+            } => {
+                existing_object.alter_statements(new_object, writer)?;
+            }
+            ObjectComparison::Drop { existing_object } => {
+                existing_object.drop_statements(writer)?;
+            }
+            ObjectComparison::Create { new_object } => {
+                new_object.create_statements(writer)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn compare_object_groups2<'o, S>(
+    old_objects: &'o [S],
+    new_objects: &'o [S],
+    buffer: &mut Vec<ObjectComparison<'o, S>>,
+)
+where
+    S: SqlObject,
+{
+    for existing_object in old_objects {
+        match new_objects
+            .iter()
+            .find(|s| s.name() == existing_object.name())
+        {
+            Some(new_object) if existing_object != new_object => {
+                buffer.push(ObjectComparison::Alter {
+                    existing_object,
+                    new_object,
+                });
+            }
+            None => buffer.push(ObjectComparison::Drop { existing_object }),
+            _ => {}
+        }
+    }
+    for new_object in new_objects
+        .iter()
+        .filter(|s| !old_objects.iter().any(|o| o.name() == s.name()))
+    {
+        buffer.push(ObjectComparison::Create { new_object });
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Deserialize)]

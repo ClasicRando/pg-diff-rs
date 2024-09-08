@@ -125,7 +125,7 @@ impl SqlObject for Constraint {
                 write_join!(w, ref_columns, ",");
                 write!(
                     w,
-                    ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update}",
+                    ") {}\n    ON DELETE {on_delete}\n    ON UPDATE {on_update}",
                     match_type.as_ref(),
                 )?;
             }

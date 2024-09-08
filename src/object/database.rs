@@ -1,5 +1,5 @@
 use std::collections::{HashSet, VecDeque};
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::{Display, Formatter};
 use std::path::Path;
 
 use async_walkdir::WalkDir;
@@ -62,15 +62,19 @@ impl Drop for DatabaseMigration {
         let db_name = self.source_control_database.temp_db_name.clone();
         let pool = self.pool.clone();
         let fut = async move {
-            sqlx::query(&format!(
+            if let Err(error) = sqlx::query(&format!(
                 "DROP DATABASE IF EXISTS {} WITH (FORCE);",
                 db_name
             ))
             .execute(&pool)
             .await
-            .unwrap_or_else(|_| panic!("Failed to drop temp database named '{}'", db_name));
+            {
+                println!("Error dropping temp database: {error}");
+            }
         };
-        tokio::spawn(fut);
+        // It's okay to block on this future here since the database migration will signify the end
+        // of the application's lifetime
+        futures::executor::block_on(fut);
     }
 }
 
@@ -716,6 +720,8 @@ impl SourceControlDatabase {
 
     pub async fn apply_to_temp_database(&mut self) -> Result<(), PgDiffError> {
         println!("Applying source control DDL statements to temp database");
+        println!("Temp Database Name: {}", self.temp_db_name);
+        println!("Total statements: {}", self.statements.len());
         let query = include_str!("./../../queries/check_create_db_role.pgsql");
         let can_create_database: bool = query_scalar(query).fetch_one(&self.pool).await?;
         if !can_create_database {
@@ -848,7 +854,7 @@ impl Display for LocalProvider {
             } => {
                 write!(
                     f,
-                    "\n\tLOCALE_PROVIDER 'libc'\n\tLC_COLLATE '{}'\n\tLC_CTYPE '{}'",
+                    "\n    LOCALE_PROVIDER 'libc'\n    LC_COLLATE '{}'\n    LC_CTYPE '{}'",
                     lc_collate, lc_ctype
                 )
             }
@@ -858,11 +864,11 @@ impl Display for LocalProvider {
             } => {
                 write!(
                     f,
-                    "\n\tLOCALE_PROVIDER 'icu'\n\tICU_LOCALE '{}'",
+                    "\n    LOCALE_PROVIDER 'icu'\n    ICU_LOCALE '{}'",
                     icu_locale
                 )?;
                 if let Some(icu_rules) = icu_rules {
-                    write!(f, "\n\tICU_RULES '{}'", icu_rules)?;
+                    write!(f, "\n    ICU_RULES '{}'", icu_rules)?;
                 }
                 Ok(())
             }
@@ -883,11 +889,11 @@ impl Display for DatabaseOptions {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            " WITH\n\tENCODING '{}'\n\tCOLLATION_VERSION '{}'",
+            " WITH\n    ENCODING '{}'\n    COLLATION_VERSION '{}'",
             self.encoding, self.collation_version
         )?;
         if let Some(locale) = &self.locale {
-            write!(f, "\n\tLOCALE '{}'", locale)?;
+            write!(f, "\n    LOCALE '{}'", locale)?;
         }
         write!(f, "{}", self.locale_provider)
     }
@@ -972,19 +978,14 @@ impl Database {
         for schema in &self.schemas {
             write_create_statements_to_file(schema, &output_path).await?;
         }
+        for extension in &self.extensions {
+            write_create_statements_to_file(extension, &output_path).await?;
+        }
         for udt in &self.udts {
             write_create_statements_to_file(udt, &output_path).await?;
         }
         for table in &self.tables {
             write_create_statements_to_file(table, &output_path).await?;
-            for policy in self.policies.iter().filter(|c| c.table_oid == table.oid) {
-                append_create_statements_to_owner_table_file(
-                    policy,
-                    &policy.owner_table_name,
-                    &output_path,
-                )
-                .await?
-            }
             for constraint in self.constraints.iter().filter(|c| c.table_oid == table.oid) {
                 append_create_statements_to_owner_table_file(
                     constraint,
@@ -1009,6 +1010,17 @@ impl Database {
                 )
                 .await?
             }
+            for policy in self.policies.iter().filter(|c| c.table_oid == table.oid) {
+                append_create_statements_to_owner_table_file(
+                    policy,
+                    &policy.owner_table_name,
+                    &output_path,
+                )
+                .await?
+            }
+        }
+        for view in &self.views {
+            write_create_statements_to_file(view, &output_path).await?;
         }
         for sequence in &self.sequences {
             if let Some(owner_table) = &sequence.owner {
@@ -1025,12 +1037,6 @@ impl Database {
         for function in &self.functions {
             write_create_statements_to_file(function, &output_path).await?;
         }
-        for view in &self.views {
-            write_create_statements_to_file(view, &output_path).await?;
-        }
-        for extension in &self.extensions {
-            write_create_statements_to_file(extension, &output_path).await?;
-        }
         Ok(())
     }
 
@@ -1046,8 +1052,8 @@ impl Database {
         compare_object_groups(&self.triggers, &other.triggers, &mut result)?;
         compare_object_groups(&self.policies, &other.policies, &mut result)?;
         compare_object_groups(&self.views, &other.views, &mut result)?;
-        compare_object_groups(&self.functions, &other.functions, &mut result)?;
         compare_object_groups(&self.sequences, &other.sequences, &mut result)?;
+        compare_object_groups(&self.functions, &other.functions, &mut result)?;
         println!("Done!");
         Ok(result)
     }
@@ -1064,7 +1070,6 @@ where
 {
     let mut statements = String::new();
     object.create_statements(&mut statements)?;
-    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
 
     let path = root_directory
         .as_ref()
@@ -1086,7 +1091,6 @@ where
 {
     let mut statements = String::new();
     object.create_statements(&mut statements)?;
-    writeln!(&mut statements, "\n-- {:?}", object.dependencies())?;
 
     let path = root_directory.as_ref().join("table");
     tokio::fs::create_dir_all(&path).await?;

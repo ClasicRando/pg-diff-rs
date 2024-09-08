@@ -69,7 +69,7 @@ impl SqlObject for Policy {
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         write!(
             w,
-            "CREATE POLICY {} ON {} AS {} FOR {} TO {}",
+            "CREATE POLICY {}\n    ON {}\n    AS {}\n    FOR {}\n    TO {}",
             self.name,
             self.owner_table_name,
             if self.is_permissive {
@@ -81,16 +81,18 @@ impl SqlObject for Policy {
             self.applies_to.join(" ")
         )?;
         if let Some(using_expression) = &self.using_expression {
-            write!(w, " USING ({using_expression})")?;
+            write!(w, "\n    USING ({using_expression})")?;
         }
         if let Some(check_expression) = &self.check_expression {
-            write!(w, " WITH CHECK ({check_expression})")?;
+            write!(w, "\n    WITH CHECK ({check_expression})")?;
         }
         w.write_str(";\n")?;
         Ok(())
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
+        println!("{:?}", self);
+        println!("{new:?}");
         if self.is_permissive != new.is_permissive || self.command != new.command {
             self.drop_statements(w)?;
             self.create_statements(w)?;
@@ -98,16 +100,16 @@ impl SqlObject for Policy {
         }
         write!(
             w,
-            "ALTER POLICY {} ON {} TO {}",
+            "ALTER POLICY {}\n    ON {}\n    TO {}",
             self.name,
             self.owner_table_name,
             new.applies_to.join(" ")
         )?;
         if let Some(using_expression) = &new.using_expression {
-            write!(w, " USING ({using_expression})")?;
+            write!(w, "\n    USING ({using_expression})")?;
         }
         if let Some(check_expression) = &new.check_expression {
-            write!(w, " WITH CHECK ({check_expression})")?;
+            write!(w, "\n    WITH CHECK ({check_expression})")?;
         }
         w.write_str(";\n")?;
         Ok(())

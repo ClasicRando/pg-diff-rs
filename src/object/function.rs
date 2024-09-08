@@ -286,8 +286,8 @@ impl Function {
     {
         let declare_regex = regex!("^declare"i);
         let arguments = FunctionArgument::from_arg_list(&self.arguments);
-        w.write_str("DECLARE\n\t")?;
-        write_join!(w, arguments, ";\n\t");
+        w.write_str("DECLARE\n    ")?;
+        write_join!(w, arguments, ";\n    ");
         if !arguments.is_empty() {
             w.write_char(';')?;
         }

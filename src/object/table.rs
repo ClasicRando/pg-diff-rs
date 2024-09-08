@@ -130,11 +130,11 @@ impl SqlObject for Table {
         if let Some(partitioned_parent_table) = &self.partitioned_parent_table {
             write!(w, "PARTITION OF {partitioned_parent_table}")?;
         } else if !self.columns.is_empty() {
-            w.write_str("(\n\t")?;
+            w.write_str("(\n    ")?;
             map_join_slice(
                 self.columns.as_slice(),
                 |c, s| c.field_definition(true, s),
-                ",\n\t",
+                ",\n    ",
                 w,
             )?;
             w.write_str("\n)")?;

@@ -45,13 +45,13 @@ impl SqlObject for Udt {
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         match &self.udt_type {
             UdtType::Enum { labels } => {
-                write!(w, "CREATE TYPE {} AS ENUM (\n\t'", self.name)?;
-                write_join!(w, labels, "',\n\t'");
+                write!(w, "CREATE TYPE {} AS ENUM (\n    '", self.name)?;
+                write_join!(w, labels, "',\n    '");
                 w.write_str("'\n);\n")?;
             }
             UdtType::Composite { attributes } => {
-                write!(w, "CREATE TYPE {} AS (\n\t", self.name)?;
-                write_join!(w, attributes, ",\n\t");
+                write!(w, "CREATE TYPE {} AS (\n    ", self.name)?;
+                write_join!(w, attributes, ",\n    ");
                 w.write_str("\n);\n")?;
             }
             UdtType::Range { subtype } => {

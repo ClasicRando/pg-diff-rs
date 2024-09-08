@@ -135,7 +135,9 @@ async fn main() -> Result<(), PgDiffError> {
             let database = Database::from_connection(pool).await?;
             database.script_out(output_path).await?;
         }
-        Commands::Migrate { .. } => {}
+        Commands::Migrate { .. } => {
+            println!("Migration is currently not supported. However, you can take the planned queries from 'plan' command to get migration steps");
+        }
         Commands::Plan {
             connection,
             files_path,
