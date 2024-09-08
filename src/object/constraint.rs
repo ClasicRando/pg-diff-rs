@@ -92,7 +92,7 @@ impl SqlObject for Constraint {
                     self.name,
                     if *are_nulls_distinct { "" } else { " NOT" },
                 )?;
-                write_join!(w, columns.iter(), ",");
+                write_join!(w, columns, ",");
                 write!(w, "){index_parameters}")?;
             }
             ConstraintType::PrimaryKey {
@@ -104,7 +104,7 @@ impl SqlObject for Constraint {
                     "ALTER TABLE {} ADD CONSTRAINT {}\nPRIMARY KEY (",
                     self.owner_table_name, self.name,
                 )?;
-                write_join!(w, columns.iter(), ",");
+                write_join!(w, columns, ",");
                 write!(w, "){index_parameters}")?;
             }
             ConstraintType::ForeignKey {
@@ -120,9 +120,9 @@ impl SqlObject for Constraint {
                     "ALTER TABLE {} ADD CONSTRAINT {}\nFOREIGN KEY (",
                     self.owner_table_name, self.name,
                 )?;
-                write_join!(w, columns.iter(), ",");
+                write_join!(w, columns, ",");
                 write!(w, ") REFERENCES {ref_table}(")?;
-                write_join!(w, ref_columns.iter(), ",");
+                write_join!(w, ref_columns, ",");
                 write!(
                     w,
                     ") {}\n\tON DELETE {on_delete}\n\tON UPDATE {on_update}",
@@ -258,7 +258,7 @@ impl Display for ForeignKeyAction {
             ForeignKeyAction::SetNull { columns } => {
                 if let Some(columns) = columns {
                     write!(f, "SET NULL (")?;
-                    write_join!(f, columns.iter(), ",");
+                    write_join!(f, columns, ",");
                     write!(f, ")")
                 } else {
                     write!(f, "SET NULL")
@@ -267,7 +267,7 @@ impl Display for ForeignKeyAction {
             ForeignKeyAction::SetDefault { columns } => {
                 if let Some(columns) = columns {
                     write!(f, "SET DEFAULT (")?;
-                    write_join!(f, columns.iter(), ",");
+                    write_join!(f, columns, ",");
                     write!(f, ")")
                 } else {
                     write!(f, "SET DEFAULT")

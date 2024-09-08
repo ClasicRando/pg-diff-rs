@@ -30,7 +30,6 @@ pub struct Index {
     #[sqlx(json)]
     pub(crate) schema_qualified_name: SchemaQualifiedName,
     pub(crate) columns: Vec<String>,
-    pub(crate) is_valid: bool,
     pub(crate) definition_statement: String,
     #[sqlx(flatten)]
     pub(crate) parameters: IndexParameters,

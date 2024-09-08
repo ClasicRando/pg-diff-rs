@@ -7,7 +7,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use thiserror::Error as ThisError;
 
-use crate::object::{Database, DatabaseMigration, SchemaQualifiedName, set_verbose_flag};
+use crate::object::{set_verbose_flag, Database, DatabaseMigration, SchemaQualifiedName};
 
 mod object;
 
@@ -41,49 +41,7 @@ pub enum PgDiffError {
     #[error(transparent)]
     WalkDir(#[from] async_walkdir::Error),
     #[error("Could not parse all source control statements into a temp database. Remaining\n{remaining_statements:#?}")]
-    SourceControlScript {
-        remaining_statements: Vec<String>
-    }
-}
-
-#[macro_export]
-macro_rules! write_join {
-    ($write:ident, $items:ident.iter(), $separator:literal) => {
-        let mut iter = $items.iter();
-        if let Some(item) = iter.next() {
-            write!($write, "{item}")?;
-            for item in iter {
-                $write.write_str($separator)?;
-                write!($write, "{item}")?;
-            }
-        };
-    };
-    ($write:ident, $items:expr, $separator:literal) => {
-        let mut iter = $items;
-        if let Some(item) = iter.next() {
-            write!($write, "{item}")?;
-            for item in iter {
-                $write.write_str($separator)?;
-                write!($write, "{item}")?;
-            }
-        };
-    };
-    ($write:ident, $prefix:literal, $items:expr, $separator:literal, $postfix:literal) => {
-        if !$prefix.is_empty() {
-            $write.write_str($prefix)?;
-        };
-        let mut iter = $items;
-        if let Some(item) = iter.next() {
-            write!($write, "{item}")?;
-            for item in iter {
-                $write.write_str($separator)?;
-                write!($write, "{item}")?;
-            }
-        };
-        if !$postfix.is_empty() {
-            $write.write_str($postfix)?;
-        };
-    };
+    SourceControlScript { remaining_statements: Vec<String> },
 }
 
 fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>(
@@ -185,7 +143,7 @@ async fn main() -> Result<(), PgDiffError> {
             let migration_script = database_migration.plan_migration().await?;
             if migration_script.is_empty() {
                 println!("\nNo migration needed!");
-                return Ok(())
+                return Ok(());
             }
             println!("{}", migration_script);
         }

@@ -46,12 +46,12 @@ impl SqlObject for Udt {
         match &self.udt_type {
             UdtType::Enum { labels } => {
                 write!(w, "CREATE TYPE {} AS ENUM (\n\t'", self.name)?;
-                write_join!(w, labels.iter(), "',\n\t'");
+                write_join!(w, labels, "',\n\t'");
                 w.write_str("'\n);\n")?;
             }
             UdtType::Composite { attributes } => {
                 write!(w, "CREATE TYPE {} AS (\n\t", self.name)?;
-                write_join!(w, attributes.iter(), ",\n\t");
+                write_join!(w, attributes, ",\n\t");
                 w.write_str("\n);\n")?;
             }
             UdtType::Range { subtype } => {

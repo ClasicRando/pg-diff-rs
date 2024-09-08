@@ -1,6 +1,4 @@
-SELECT
-    JSON_OBJECT('schema_name': pn.nspname, 'local_name': p.proname) AS "name",
-    JSON_OBJECT('oid': CAST(p.oid AS INTEGER), 'catalog': 'pg_proc') AS "dependency"
+SELECT JSON_OBJECT('schema_name': pn.nspname, 'local_name': p.proname) AS "name"
 FROM pg_catalog.pg_proc AS p
 JOIN pg_catalog.pg_namespace AS pn
     ON p.pronamespace = pn.oid

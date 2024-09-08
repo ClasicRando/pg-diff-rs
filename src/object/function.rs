@@ -276,7 +276,7 @@ impl Function {
         W: Write,
     {
         let arguments = FunctionArgument::from_arg_list(&self.arguments);
-        write_join!(w, arguments.iter(), ",");
+        write_join!(w, arguments, ",");
         Ok(())
     }
 
@@ -287,7 +287,7 @@ impl Function {
         let declare_regex = regex!("^declare"i);
         let arguments = FunctionArgument::from_arg_list(&self.arguments);
         w.write_str("DECLARE\n\t")?;
-        write_join!(w, arguments.iter(), ";\n\t");
+        write_join!(w, arguments, ";\n\t");
         if !arguments.is_empty() {
             w.write_char(';')?;
         }

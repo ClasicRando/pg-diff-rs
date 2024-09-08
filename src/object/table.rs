@@ -151,7 +151,7 @@ impl SqlObject for Table {
         match &self.inherited_tables {
             Some(inherited_tables) if !inherited_tables.is_empty() => {
                 w.write_str("\nINHERITS (")?;
-                write_join!(w, inherited_tables.iter(), ",");
+                write_join!(w, inherited_tables, ",");
                 w.write_str(")")?;
             }
             _ => {}
@@ -161,7 +161,7 @@ impl SqlObject for Table {
         }
         if let Some(storage_parameter) = &self.with {
             w.write_str("\nWITH (")?;
-            write_join!(w, storage_parameter.iter(), ",");
+            write_join!(w, storage_parameter, ",");
             w.write_str(")")?;
         }
         if let Some(tablespace) = &self.tablespace {

@@ -171,7 +171,7 @@ impl Display for TriggerEvent {
                 write!(f, "UPDATE")?;
                 if let Some(columns) = columns {
                     write!(f, " OF ")?;
-                    write_join!(f, columns.iter(), ",");
+                    write_join!(f, columns, ",");
                 }
                 Ok(())
             }

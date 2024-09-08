@@ -2,7 +2,6 @@ use std::fmt::{Debug, Display, Formatter, Write};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-use sqlx::postgres::types::Oid;
 
 use constraint::{get_constraints, Constraint};
 pub use database::{Database, DatabaseMigration};
@@ -16,7 +15,7 @@ use trigger::{get_triggers, Trigger};
 use udt::{get_udts, Udt};
 use view::{get_views, View};
 
-use crate::{write_join, PgDiffError};
+use crate::PgDiffError;
 
 mod constraint;
 mod database;
@@ -45,6 +44,41 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "format",
 ];
 
+fn write_join_iter<W, D, I>(write: &mut W, mut iter: I, separator: &str) -> Result<(), std::fmt::Error>
+where
+    W: Write,
+    D: Display,
+    I: Iterator<Item = D>,
+{
+    if let Some(item) = iter.next() {
+        write!(write, "{item}")?;
+        for item in iter {
+            write.write_str(separator)?;
+            write!(write, "{item}")?;
+        }
+    }
+    Ok(())
+}
+
+#[macro_export]
+macro_rules! write_join {
+    ($write:ident, $items:ident, $separator:literal) => {
+        $crate::object::write_join_iter($write, $items.iter(), $separator)?;
+    };
+    ($write:ident, $items:expr, $separator:literal) => {
+        $crate::object::write_join_iter($write, $items, $separator)?;
+    };
+    ($write:ident, $prefix:literal, $items:ident, $separator:literal, $postfix:literal) => {
+        if !$prefix.is_empty() {
+            $write.write_str($prefix)?;
+        };
+        write_join!($write, $items, $separator);
+        if !$postfix.is_empty() {
+            $write.write_str($postfix)?;
+        };
+    };
+}
+
 static VERBOSE_FLAG: OnceLock<bool> = OnceLock::new();
 
 pub fn set_verbose_flag(value: bool) {
@@ -53,14 +87,14 @@ pub fn set_verbose_flag(value: bool) {
 
 fn is_verbose() -> bool {
     if let Some(flag) = VERBOSE_FLAG.get() {
-       return *flag; 
+        return *flag;
     }
     false
 }
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
-struct StorageParameter(pub(crate) String);
+pub struct StorageParameter(pub(crate) String);
 
 impl Display for StorageParameter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -69,7 +103,7 @@ impl Display for StorageParameter {
 }
 
 #[derive(Debug, PartialEq, Deserialize, sqlx::FromRow)]
-struct IndexParameters {
+pub struct IndexParameters {
     pub(crate) include: Option<Vec<String>>,
     pub(crate) with: Option<Vec<StorageParameter>>,
     pub(crate) tablespace: Option<TableSpace>,
@@ -80,7 +114,7 @@ impl Display for IndexParameters {
         match &self.include {
             Some(include) if !include.is_empty() => {
                 write!(f, " INCLUDE(")?;
-                write_join!(f, include.iter(), ",");
+                write_join!(f, include, ",");
                 write!(f, ")")?;
             }
             _ => {}
@@ -88,7 +122,7 @@ impl Display for IndexParameters {
         match &self.with {
             Some(storage_parameters) if !storage_parameters.is_empty() => {
                 write!(f, " WITH(")?;
-                write_join!(f, storage_parameters.iter(), ",");
+                write_join!(f, storage_parameters, ",");
                 write!(f, ")")?;
             }
             _ => {}
@@ -206,7 +240,7 @@ impl Display for SchemaQualifiedName {
 
 #[derive(Debug, PartialEq, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
-struct Collation(pub(crate) String);
+pub struct Collation(pub(crate) String);
 
 impl Display for Collation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -222,7 +256,7 @@ impl Collation {
 
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
-struct TableSpace(pub(crate) String);
+pub struct TableSpace(pub(crate) String);
 
 impl Display for TableSpace {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -334,12 +368,6 @@ enum PgCatalog {
     Policy,
     #[serde(rename = "pg_extension")]
     Extension,
-}
-
-#[derive(Debug, PartialEq, Deserialize, Copy, Clone)]
-struct Dependency {
-    oid: Oid,
-    catalog: PgCatalog,
 }
 
 #[derive(Debug, sqlx::FromRow)]

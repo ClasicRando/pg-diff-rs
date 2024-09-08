@@ -11,7 +11,6 @@ WITH table_indexes AS (
             'local_name': quote_ident(ic.relname)
         ) AS "name",
         c."columns" AS "columns",
-        i.indisvalid AS "is_valid",
         pg_catalog.pg_get_indexdef(ic.oid) AS definition_statement,
         inc."columns" AS "include",
         ic.reloptions AS "with",
@@ -54,7 +53,6 @@ SELECT
     ti.owner_table_name,
     ti.name AS schema_qualified_name,
     ti.columns,
-    ti.is_valid,
     ti.definition_statement,
     ti.include,
     ti.with,
