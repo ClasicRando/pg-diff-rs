@@ -139,6 +139,137 @@ impl Display for IndexParameters {
     }
 }
 
+pub enum SqlObjectEnum<'o> {
+    Schema(&'o Schema),
+    Extension(&'o Extension),
+    Udt(&'o Udt),
+    Table(&'o Table),
+    Policy(&'o Policy),
+    Constraint(&'o Constraint),
+    Index(&'o Index),
+    Trigger(&'o Trigger),
+    Sequence(&'o Sequence),
+    Function(&'o Function),
+    View(&'o View),
+}
+
+impl<'o> SqlObjectEnum<'o> {
+    fn name(&self) -> &'o SchemaQualifiedName {
+        match self {
+            Self::Schema(schema) => &schema.name,
+            Self::Extension(extension) => &extension.name,
+            Self::Udt(udt) => &udt.name,
+            Self::Table(table) => &table.name,
+            Self::Policy(policy) => &policy.schema_qualified_name,
+            Self::Constraint(constraint) => &constraint.schema_qualified_name,
+            Self::Index(index) => &index.schema_qualified_name,
+            Self::Trigger(trigger) => &trigger.schema_qualified_name,
+            Self::Sequence(sequence) => &sequence.name,
+            Self::Function(function) => &function.name,
+            Self::View(view) => &view.name,
+        }
+    }
+
+    fn object_type_name(&self) -> &str {
+        match self {
+            Self::Schema(schema) => schema.object_type_name(),
+            Self::Extension(extension) => extension.object_type_name(),
+            Self::Udt(udt) => udt.object_type_name(),
+            Self::Table(table) => table.object_type_name(),
+            Self::Policy(policy) => policy.object_type_name(),
+            Self::Constraint(constraint) => constraint.object_type_name(),
+            Self::Index(index) => index.object_type_name(),
+            Self::Trigger(trigger) => trigger.object_type_name(),
+            Self::Sequence(sequence) => sequence.object_type_name(),
+            Self::Function(function) => function.object_type_name(),
+            Self::View(view) => view.object_type_name(),
+        }
+    }
+
+    fn dependencies(&self) -> &[SchemaQualifiedName] {
+        match self {
+            Self::Schema(schema) => schema.dependencies(),
+            Self::Extension(extension) => extension.dependencies(),
+            Self::Udt(udt) => udt.dependencies(),
+            Self::Table(table) => table.dependencies(),
+            Self::Policy(policy) => policy.dependencies(),
+            Self::Constraint(constraint) => constraint.dependencies(),
+            Self::Index(index) => index.dependencies(),
+            Self::Trigger(trigger) => trigger.dependencies(),
+            Self::Sequence(sequence) => sequence.dependencies(),
+            Self::Function(function) => function.dependencies(),
+            Self::View(view) => view.dependencies(),
+        }
+    }
+
+    /// Create the `CREATE` statement for this object
+    fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        match self {
+            Self::Schema(schema) => schema.create_statements(w),
+            Self::Extension(extension) => extension.create_statements(w),
+            Self::Udt(udt) => udt.create_statements(w),
+            Self::Table(table) => table.create_statements(w),
+            Self::Policy(policy) => policy.create_statements(w),
+            Self::Constraint(constraint) => constraint.create_statements(w),
+            Self::Index(index) => index.create_statements(w),
+            Self::Trigger(trigger) => trigger.create_statements(w),
+            Self::Sequence(sequence) => sequence.create_statements(w),
+            Self::Function(function) => function.create_statements(w),
+            Self::View(view) => view.create_statements(w),
+        }
+    }
+
+    /// Create the `ALTER` statement(s) required for this SQL object to be migrated to the new state
+    /// provided.
+    ///
+    /// ## Errors
+    /// If the migration is not possible either due to an unsupported, impossible or invalid
+    /// migration.  
+    fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
+        match (self, new) {
+            (Self::Schema(old), Self::Schema(new)) if old != new => old.alter_statements(new, w),
+            (Self::Extension(old), Self::Extension(new)) if old != new => {
+                old.alter_statements(new, w)
+            }
+            (Self::Udt(old), Self::Udt(new)) if old != new => old.alter_statements(new, w),
+            (Self::Table(old), Self::Table(new)) if old != new => old.alter_statements(new, w),
+            (Self::Policy(old), Self::Policy(new)) if old != new => old.alter_statements(new, w),
+            (Self::Constraint(old), Self::Constraint(new)) if old != new => {
+                old.alter_statements(new, w)
+            }
+            (Self::Index(old), Self::Index(new)) if old != new => old.alter_statements(new, w),
+            (Self::Trigger(old), Self::Trigger(new)) if old != new => old.alter_statements(new, w),
+            (Self::Sequence(old), Self::Sequence(new)) if old != new => old.alter_statements(new, w),
+            (Self::Function(old), Self::Function(new)) if old != new => old.alter_statements(new, w),
+            (Self::View(old), Self::View(new)) if old != new => old.alter_statements(new, w),
+            _ => Ok(()),
+        }
+    }
+
+    /// Create the `DROP` statement for this object
+    fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
+        match self {
+            Self::Schema(schema) => schema.drop_statements(w),
+            Self::Extension(extension) => extension.drop_statements(w),
+            Self::Udt(udt) => udt.drop_statements(w),
+            Self::Table(table) => table.drop_statements(w),
+            Self::Policy(policy) => policy.drop_statements(w),
+            Self::Constraint(constraint) => constraint.drop_statements(w),
+            Self::Index(index) => index.drop_statements(w),
+            Self::Trigger(trigger) => trigger.drop_statements(w),
+            Self::Sequence(sequence) => sequence.drop_statements(w),
+            Self::Function(function) => function.drop_statements(w),
+            Self::View(view) => view.drop_statements(w),
+        }
+    }
+
+    fn dependencies_met(&self, completed_objects: &[SchemaQualifiedName]) -> bool {
+        self.dependencies()
+            .iter()
+            .all(|d| completed_objects.contains(d))
+    }
+}
+
 trait SqlObject: PartialEq {
     fn name(&self) -> &SchemaQualifiedName;
     fn object_type_name(&self) -> &str;
@@ -154,41 +285,11 @@ trait SqlObject: PartialEq {
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `DROP` statement for this object
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
-    fn dependencies_met(&self, completed_objects: &[SchemaQualifiedName]) -> bool {
+    fn dependencies_met(&self, completed_objects: &[&SchemaQualifiedName]) -> bool {
         self.dependencies()
             .iter()
-            .all(|d| completed_objects.contains(d))
+            .all(|d| completed_objects.contains(&d))
     }
-}
-
-fn compare_object_groups<S, W>(
-    old_objects: &[S],
-    new_objects: &[S],
-    writer: &mut W,
-) -> Result<(), PgDiffError>
-where
-    S: SqlObject + Debug,
-    W: Write,
-{
-    for existing_object in old_objects {
-        match new_objects
-            .iter()
-            .find(|s| s.name() == existing_object.name())
-        {
-            Some(new_object) if existing_object != new_object => {
-                existing_object.alter_statements(new_object, writer)?
-            }
-            None => existing_object.drop_statements(writer)?,
-            _ => {}
-        }
-    }
-    for new_object in new_objects
-        .iter()
-        .filter(|s| !old_objects.iter().any(|o| o.name() == s.name()))
-    {
-        new_object.create_statements(writer)?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Deserialize)]

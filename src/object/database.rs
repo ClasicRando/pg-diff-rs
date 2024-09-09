@@ -14,10 +14,10 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::object::{
-    compare_object_groups, find_index, get_constraints, get_extensions, get_functions, get_indexes,
-    get_policies, get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views,
-    is_verbose, plpgsql::parse_plpgsql_function, Constraint, Extension, Function, Index, Policy,
-    Schema, SchemaQualifiedName, Sequence, SqlObject, Table, Trigger, Udt, View,
+    find_index, get_constraints, get_extensions, get_functions, get_indexes, get_policies,
+    get_schemas, get_sequences, get_tables, get_triggers, get_udts, get_views, is_verbose,
+    plpgsql::parse_plpgsql_function, Constraint, Extension, Function, Index, Policy, Schema,
+    SchemaQualifiedName, Sequence, SqlObject, SqlObjectEnum, Table, Trigger, Udt, View,
     BUILT_IN_FUNCTIONS, BUILT_IN_NAMES,
 };
 use crate::PgDiffError;
@@ -1142,19 +1142,330 @@ impl Database {
     fn compare_to_other_database(&self, other: &Self) -> Result<String, PgDiffError> {
         println!("Comparing source control database to actual database");
         let mut result = String::new();
-        compare_object_groups(&self.schemas, &other.schemas, &mut result)?;
-        compare_object_groups(&self.extensions, &other.extensions, &mut result)?;
-        compare_object_groups(&self.udts, &other.udts, &mut result)?;
-        compare_object_groups(&self.tables, &other.tables, &mut result)?;
-        compare_object_groups(&self.constraints, &other.constraints, &mut result)?;
-        compare_object_groups(&self.indexes, &other.indexes, &mut result)?;
-        compare_object_groups(&self.triggers, &other.triggers, &mut result)?;
-        compare_object_groups(&self.policies, &other.policies, &mut result)?;
-        compare_object_groups(&self.views, &other.views, &mut result)?;
-        compare_object_groups(&self.sequences, &other.sequences, &mut result)?;
-        compare_object_groups(&self.functions, &other.functions, &mut result)?;
+        for obj in DbCompare::new(self, other) {
+            match obj {
+                DbCompareResult::Create(new) => new.create_statements(&mut result)?,
+                DbCompareResult::Alter { old, new } => {
+                    old.alter_statements(&new, &mut result)?;
+                }
+                DbCompareResult::Drop(old) => old.drop_statements(&mut result)?,
+            }
+        }
         println!("Done!");
         Ok(result)
+    }
+}
+
+struct DbIter<'d> {
+    database: &'d Database,
+    completed_objects: Vec<&'d SchemaQualifiedName>,
+    completed_schemas: usize,
+    completed_extensions: usize,
+    completed_udt: usize,
+    completed_tables: usize,
+    completed_constraints: usize,
+    completed_indexes: usize,
+    completed_triggers: usize,
+    completed_policies: usize,
+    completed_views: usize,
+    completed_sequences: usize,
+    completed_functions: usize,
+}
+
+impl<'d> DbIter<'d> {
+    fn new(database: &'d Database) -> Self {
+        Self {
+            database,
+            completed_objects: vec![],
+            completed_schemas: 0,
+            completed_extensions: 0,
+            completed_udt: 0,
+            completed_tables: 0,
+            completed_constraints: 0,
+            completed_indexes: 0,
+            completed_triggers: 0,
+            completed_policies: 0,
+            completed_views: 0,
+            completed_sequences: 0,
+            completed_functions: 0,
+        }
+    }
+}
+
+impl<'d> Iterator for DbIter<'d> {
+    type Item = SqlObjectEnum<'d>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.completed_schemas < self.database.schemas.len() {
+            if let Some(schema) = self.database.schemas.iter().find(|s| {
+                !self.completed_objects.contains(&&s.name)
+                    && s.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_schemas += 1;
+                self.completed_objects.push(&schema.name);
+                return Some(SqlObjectEnum::Schema(schema));
+            }
+        }
+
+        if self.completed_extensions < self.database.extensions.len() {
+            if let Some(extension) = self.database.extensions.iter().find(|e| {
+                !self.completed_objects.contains(&&e.name)
+                    && e.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_extensions += 1;
+                self.completed_objects.push(&extension.name);
+                return Some(SqlObjectEnum::Extension(extension));
+            }
+        }
+
+        if self.completed_udt < self.database.udts.len() {
+            if let Some(udt) = self.database.udts.iter().find(|u| {
+                !self.completed_objects.contains(&&u.name)
+                    && u.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_udt += 1;
+                self.completed_objects.push(&udt.name);
+                return Some(SqlObjectEnum::Udt(udt));
+            }
+        }
+
+        if self.completed_tables < self.database.tables.len() {
+            if let Some(table) = self.database.tables.iter().find(|t| {
+                !self.completed_objects.contains(&&t.name)
+                    && t.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_tables += 1;
+                self.completed_objects.push(&table.name);
+                return Some(SqlObjectEnum::Table(table));
+            }
+        }
+
+        if self.completed_constraints < self.database.constraints.len() {
+            if let Some(constraint) = self.database.constraints.iter().find(|c| {
+                !self.completed_objects.contains(&&c.schema_qualified_name)
+                    && c.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_constraints += 1;
+                self.completed_objects
+                    .push(&constraint.schema_qualified_name);
+                return Some(SqlObjectEnum::Constraint(constraint));
+            }
+        }
+
+        if self.completed_indexes < self.database.indexes.len() {
+            if let Some(index) = self.database.indexes.iter().find(|i| {
+                !self.completed_objects.contains(&&i.schema_qualified_name)
+                    && i.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_indexes += 1;
+                self.completed_objects.push(&index.schema_qualified_name);
+                return Some(SqlObjectEnum::Index(index));
+            }
+        }
+
+        if self.completed_triggers < self.database.triggers.len() {
+            if let Some(trigger) = self.database.triggers.iter().find(|t| {
+                !self.completed_objects.contains(&&t.schema_qualified_name)
+                    && t.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_triggers += 1;
+                self.completed_objects.push(&trigger.schema_qualified_name);
+                return Some(SqlObjectEnum::Trigger(trigger));
+            }
+        }
+
+        if self.completed_policies < self.database.policies.len() {
+            if let Some(policy) = self.database.policies.iter().find(|s| {
+                !self.completed_objects.contains(&&s.schema_qualified_name)
+                    && s.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_policies += 1;
+                self.completed_objects.push(&policy.schema_qualified_name);
+                return Some(SqlObjectEnum::Policy(policy));
+            }
+        }
+
+        if self.completed_views < self.database.views.len() {
+            if let Some(view) = self.database.views.iter().find(|v| {
+                !self.completed_objects.contains(&&v.name)
+                    && v.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_views += 1;
+                self.completed_objects.push(&view.name);
+                return Some(SqlObjectEnum::View(view));
+            }
+        }
+
+        if self.completed_sequences < self.database.sequences.len() {
+            if let Some(sequence) = self.database.sequences.iter().find(|s| {
+                !self.completed_objects.contains(&&s.name)
+                    && s.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_sequences += 1;
+                self.completed_objects.push(&sequence.name);
+                return Some(SqlObjectEnum::Sequence(sequence));
+            }
+        }
+
+        if self.completed_functions < self.database.functions.len() {
+            if let Some(function) = self.database.functions.iter().find(|f| {
+                !self.completed_objects.contains(&&f.name)
+                    && f.dependencies_met(&self.completed_objects)
+            }) {
+                self.completed_functions += 1;
+                self.completed_objects.push(&function.name);
+                return Some(SqlObjectEnum::Function(function));
+            }
+        }
+        None
+    }
+}
+
+enum DbCompareResult<'d> {
+    Create(SqlObjectEnum<'d>),
+    Alter {
+        old: SqlObjectEnum<'d>,
+        new: SqlObjectEnum<'d>,
+    },
+    Drop(SqlObjectEnum<'d>),
+}
+
+struct DbCompare<'d> {
+    old: &'d Database,
+    new: &'d Database,
+    old_iter: DbIter<'d>,
+    new_iter: DbIter<'d>,
+    is_done_old: bool,
+}
+
+impl<'d> DbCompare<'d> {
+    fn new(old: &'d Database, new: &'d Database) -> Self {
+        Self {
+            old,
+            new,
+            old_iter: DbIter::new(old),
+            new_iter: DbIter::new(new),
+            is_done_old: false,
+        }
+    }
+}
+
+impl<'d> Iterator for DbCompare<'d> {
+    type Item = DbCompareResult<'d>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_done_old {
+            let obj = self.new_iter.next()?;
+            return Some(DbCompareResult::Create(obj));
+        }
+
+        let Some(obj) = self.old_iter.next() else {
+            self.is_done_old = true;
+            return self.next();
+        };
+
+        let new_object = match obj {
+            SqlObjectEnum::Schema(schema) => self.new.schemas.iter().find_map(|s| {
+                if s.name() == schema.name() {
+                    Some(SqlObjectEnum::Schema(s))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Extension(extension) => self.new.extensions.iter().find_map(|e| {
+                if e.name() == extension.name() {
+                    Some(SqlObjectEnum::Extension(e))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Udt(udt) => self.new.udts.iter().find_map(|u| {
+                if u.name() == udt.name() {
+                    Some(SqlObjectEnum::Udt(u))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Table(table) => self.new.tables.iter().find_map(|t| {
+                if t.name() == table.name() {
+                    Some(SqlObjectEnum::Table(t))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Policy(policy) => self.new.policies.iter().find_map(|p| {
+                if p.name() == policy.name() {
+                    Some(SqlObjectEnum::Policy(p))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Constraint(constraint) => self.new.constraints.iter().find_map(|c| {
+                if c.name() == constraint.name() {
+                    Some(SqlObjectEnum::Constraint(c))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Index(index) => self.new.indexes.iter().find_map(|i| {
+                if i.name() == index.name() {
+                    Some(SqlObjectEnum::Index(i))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Trigger(trigger) => self.new.triggers.iter().find_map(|t| {
+                if t.name() == trigger.name() {
+                    Some(SqlObjectEnum::Trigger(t))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Sequence(sequence) => self.new.sequences.iter().find_map(|s| {
+                if s.name() == sequence.name() {
+                    Some(SqlObjectEnum::Sequence(s))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::Function(function) => self.new.functions.iter().find_map(|f| {
+                if f.name() == function.name() {
+                    Some(SqlObjectEnum::Function(f))
+                } else {
+                    None
+                }
+            }),
+            SqlObjectEnum::View(view) => self.new.views.iter().find_map(|v| {
+                if v.name() == view.name() {
+                    Some(SqlObjectEnum::View(v))
+                } else {
+                    None
+                }
+            }),
+        };
+
+        if let Some(other) = new_object {
+            match &other {
+                SqlObjectEnum::Schema(_) => self.new_iter.completed_schemas += 1,
+                SqlObjectEnum::Extension(_) => self.new_iter.completed_extensions += 1,
+                SqlObjectEnum::Udt(_) => self.new_iter.completed_udt += 1,
+                SqlObjectEnum::Table(_) => self.new_iter.completed_tables += 1,
+                SqlObjectEnum::Policy(_) => self.new_iter.completed_policies += 1,
+                SqlObjectEnum::Constraint(_) => self.new_iter.completed_constraints += 1,
+                SqlObjectEnum::Index(_) => self.new_iter.completed_indexes += 1,
+                SqlObjectEnum::Trigger(_) => self.new_iter.completed_triggers += 1,
+                SqlObjectEnum::Sequence(_) => self.new_iter.completed_sequences += 1,
+                SqlObjectEnum::Function(_) => self.new_iter.completed_functions += 1,
+                SqlObjectEnum::View(_) => self.new_iter.completed_views += 1,
+            }
+            self.new_iter.completed_objects.push(other.name());
+            Some(DbCompareResult::Alter {
+                old: obj,
+                new: other,
+            })
+        } else {
+            Some(DbCompareResult::Drop(obj))
+        }
     }
 }
 

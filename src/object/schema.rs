@@ -71,7 +71,7 @@ impl SqlObject for Schema {
         Ok(())
     }
 
-    fn dependencies_met(&self, _: &[SchemaQualifiedName]) -> bool {
+    fn dependencies_met(&self, _: &[&SchemaQualifiedName]) -> bool {
         true
     }
 }

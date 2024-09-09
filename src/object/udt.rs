@@ -183,7 +183,7 @@ pub enum UdtType {
 }
 
 impl UdtType {
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             UdtType::Enum { .. } => "enum",
             UdtType::Composite { .. } => "composite",
