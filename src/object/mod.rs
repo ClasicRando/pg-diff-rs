@@ -2,6 +2,9 @@ use std::fmt::{Debug, Display, Formatter, Write};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
+use sqlx::error::BoxDynError;
+use sqlx::Postgres;
+use sqlx::postgres::{PgTypeInfo, PgValueRef};
 
 use constraint::{get_constraints, Constraint};
 pub use database::{Database, DatabaseMigration};
@@ -45,6 +48,8 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "format",
 ];
 
+/// Join the items of an iterator by writing there contents to an object of type [W] separated by
+/// the [separator] characters specified.
 fn write_join_iter<W, D, I>(
     write: &mut W,
     mut iter: I,
@@ -65,6 +70,9 @@ where
     Ok(())
 }
 
+/// Write iterable types to a specified writable object. This macro wraps the [write_join_iter]
+/// function but allows for iterator expression to be supplied as well as prefix and suffix values
+/// to be specified.
 #[macro_export]
 macro_rules! write_join {
     ($write:ident, $items:ident, $separator:literal) => {
@@ -82,14 +90,28 @@ macro_rules! write_join {
             $write.write_str($postfix)?;
         };
     };
+    ($write:ident, $prefix:literal, $items:expr, $separator:literal, $postfix:literal) => {
+        if !$prefix.is_empty() {
+            $write.write_str($prefix)?;
+        };
+        write_join!($write, $items, $separator);
+        if !$postfix.is_empty() {
+            $write.write_str($postfix)?;
+        };
+    };
 }
 
+/// Static state of the verbose option within the application. DO NOT ACCESS directly but rather
+/// use the [set_verbose_flag] and [is_verbose] functions.
 static VERBOSE_FLAG: OnceLock<bool> = OnceLock::new();
 
+/// Initialize the [VERBOSE_FLAG] option if not already set. If already set, then this function
+/// does nothing.
 pub fn set_verbose_flag(value: bool) {
     VERBOSE_FLAG.get_or_init(|| value);
 }
 
+/// Get the state of the [VERBOSE_FLAG] option. If the value cannot be obtained, false is returned
 fn is_verbose() -> bool {
     if let Some(flag) = VERBOSE_FLAG.get() {
         return *flag;
@@ -97,6 +119,8 @@ fn is_verbose() -> bool {
     false
 }
 
+/// Storage parameters for data objects persisted within a database (i.e. tables and indexes).
+/// Although this is a string, the underlining value is a key value pair separated by an `=`.
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct StorageParameter(pub(crate) String);
@@ -107,10 +131,14 @@ impl Display for StorageParameter {
     }
 }
 
+/// Options that can be specified by a table index
 #[derive(Debug, PartialEq, Deserialize, sqlx::FromRow)]
 pub struct IndexParameters {
+    /// Optional list of columns included in an index
     pub(crate) include: Option<Vec<String>>,
+    /// Optional list of [StorageParameter]s for the index
     pub(crate) with: Option<Vec<StorageParameter>>,
+    /// Optional tablespace specified for the index. [None] means the default tablespace is used
     pub(crate) tablespace: Option<TableSpace>,
 }
 
@@ -139,6 +167,9 @@ impl Display for IndexParameters {
     }
 }
 
+/// Union type of the varying SQL object types. This is used to allow returning of a generic SQL
+/// object during iteration because the [SqlObject] trait is not object safe. To reduce the size
+/// of the enum of not copy data, all items are references to their respective [SqlObject].
 pub enum SqlObjectEnum<'o> {
     Schema(&'o Schema),
     Extension(&'o Extension),
@@ -154,6 +185,7 @@ pub enum SqlObjectEnum<'o> {
 }
 
 impl<'o> SqlObjectEnum<'o> {
+    /// Calls the trait method [SqlObject::name] of each variant
     fn name(&self) -> &'o SchemaQualifiedName {
         match self {
             Self::Schema(schema) => &schema.name,
@@ -170,6 +202,7 @@ impl<'o> SqlObjectEnum<'o> {
         }
     }
 
+    /// Calls the trait method [SqlObject::object_type_name] of each variant
     fn object_type_name(&self) -> &str {
         match self {
             Self::Schema(schema) => schema.object_type_name(),
@@ -186,6 +219,7 @@ impl<'o> SqlObjectEnum<'o> {
         }
     }
 
+    /// Calls the trait method [SqlObject::dependencies] of each variant
     fn dependencies(&self) -> &[SchemaQualifiedName] {
         match self {
             Self::Schema(schema) => schema.dependencies(),
@@ -202,7 +236,7 @@ impl<'o> SqlObjectEnum<'o> {
         }
     }
 
-    /// Create the `CREATE` statement for this object
+    /// Calls the trait method [SqlObject::create_statements] of each variant
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         match self {
             Self::Schema(schema) => schema.create_statements(w),
@@ -219,12 +253,7 @@ impl<'o> SqlObjectEnum<'o> {
         }
     }
 
-    /// Create the `ALTER` statement(s) required for this SQL object to be migrated to the new state
-    /// provided.
-    ///
-    /// ## Errors
-    /// If the migration is not possible either due to an unsupported, impossible or invalid
-    /// migration.  
+    /// Calls the trait method [SqlObject::alter_statements] of each variant
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
         match (self, new) {
             (Self::Schema(old), Self::Schema(new)) if old != new => old.alter_statements(new, w),
@@ -239,14 +268,18 @@ impl<'o> SqlObjectEnum<'o> {
             }
             (Self::Index(old), Self::Index(new)) if old != new => old.alter_statements(new, w),
             (Self::Trigger(old), Self::Trigger(new)) if old != new => old.alter_statements(new, w),
-            (Self::Sequence(old), Self::Sequence(new)) if old != new => old.alter_statements(new, w),
-            (Self::Function(old), Self::Function(new)) if old != new => old.alter_statements(new, w),
+            (Self::Sequence(old), Self::Sequence(new)) if old != new => {
+                old.alter_statements(new, w)
+            }
+            (Self::Function(old), Self::Function(new)) if old != new => {
+                old.alter_statements(new, w)
+            }
             (Self::View(old), Self::View(new)) if old != new => old.alter_statements(new, w),
             _ => Ok(()),
         }
     }
 
-    /// Create the `DROP` statement for this object
+    /// Calls the trait method [SqlObject::drop_statements] of each variant
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         match self {
             Self::Schema(schema) => schema.drop_statements(w),
@@ -263,6 +296,7 @@ impl<'o> SqlObjectEnum<'o> {
         }
     }
 
+    /// Calls the trait method [SqlObject::dependencies_met] of each variant
     fn dependencies_met(&self, completed_objects: &[SchemaQualifiedName]) -> bool {
         self.dependencies()
             .iter()
@@ -271,20 +305,31 @@ impl<'o> SqlObjectEnum<'o> {
 }
 
 trait SqlObject: PartialEq {
+    /// Unique schema qualified name for the object within the database
     fn name(&self) -> &SchemaQualifiedName;
+    /// General object type name used for creating generic SQL statements
     fn object_type_name(&self) -> &str;
+    /// Declared dependencies of this object as a slice of [SchemaQualifiedName]s
     fn dependencies(&self) -> &[SchemaQualifiedName];
     /// Create the `CREATE` statement for this object
+    ///
+    /// ## Errors
+    /// If a drop statement cannot be derived or a formatting error occurs
     fn create_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
     /// Create the `ALTER` statement(s) required for this SQL object to be migrated to the new state
     /// provided.
     ///
     /// ## Errors
     /// If the migration is not possible either due to an unsupported, impossible or invalid
-    /// migration.  
+    /// migration. Can also fail when a formatting error occurs.
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError>;
-    /// Create the `DROP` statement for this object
+    /// Create the `DROP` statement for this object.
+    ///
+    /// ## Errors
+    /// If a drop statement cannot be derived or a formatting error occurs
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError>;
+    /// Returns true if all dependencies of this object have been resolved based upon the list of
+    /// `completed_objects` provided.
     fn dependencies_met(&self, completed_objects: &[&SchemaQualifiedName]) -> bool {
         self.dependencies()
             .iter()
@@ -292,10 +337,38 @@ trait SqlObject: PartialEq {
     }
 }
 
+/// Database unique name as the combination of the object's owning schema and the name within the
+/// schema. However, not every case needs both values to be non-empty value. The major exceptions
+/// are:
+/// - schema objects which only have a `schema_name` and `local_name` is empty
+/// - extension objects which only have a  `local_name` since extensions are not always linked to a
+///     schema
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Deserialize)]
 pub struct SchemaQualifiedName {
+    /// Schema name that owned the object. Can be empty if extension object
     pub(crate) schema_name: String,
+    /// Local name within the parent namespace. Can be empty if the object is a schema. This can
+    /// also include a '.' for objects that are implicitly owned by another object. For instance,
+    /// constraints only exist within the scope of a table so the `local_name` would be
+    /// 'table_name.constraint_name'.
     pub(crate) local_name: String,
+}
+
+impl<'r> sqlx::Decode<'r, Postgres> for SchemaQualifiedName {
+    fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
+        let json = sqlx::types::Json::decode(value)?;
+        Ok(json.0)
+    }
+}
+
+impl sqlx::Type<Postgres> for SchemaQualifiedName {
+    fn type_info() -> PgTypeInfo {
+        PgTypeInfo::with_name("jsonb")
+    }
+
+    fn compatible(ty: &PgTypeInfo) -> bool {
+        *ty == PgTypeInfo::with_name("json")
+    }
 }
 
 impl<S> From<S> for SchemaQualifiedName
@@ -317,17 +390,13 @@ where
 }
 
 impl SchemaQualifiedName {
+    /// Create a new [SchemaQualifiedName] instance from the direct schema + local parts. Only use
+    /// this method if the components are known ahead of time. If you need to split an already
+    /// qualified name, then use the [From] trait implementation for this type.
     fn new(schema_name: &str, local_name: &str) -> Self {
         Self {
             schema_name: schema_name.to_owned(),
             local_name: local_name.to_owned(),
-        }
-    }
-
-    fn from_schema_name(schema_name: &str) -> Self {
-        Self {
-            schema_name: schema_name.to_string(),
-            local_name: "".to_string(),
         }
     }
 }
@@ -344,6 +413,7 @@ impl Display for SchemaQualifiedName {
     }
 }
 
+/// Collation name wrapper type
 #[derive(Debug, PartialEq, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct Collation(pub(crate) String);
@@ -355,11 +425,13 @@ impl Display for Collation {
 }
 
 impl Collation {
+    /// Returns true if this is the default collation (i.e. "pg_catalog"."default")
     pub fn is_default(&self) -> bool {
         self.0.as_str() == "\"pg_catalog\".\"default\""
     }
 }
 
+/// Wrapper type for a tablespace name
 #[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct TableSpace(pub(crate) String);
@@ -370,44 +442,37 @@ impl Display for TableSpace {
     }
 }
 
-struct TablespaceCompare<'a> {
-    old: Option<&'a TableSpace>,
-    new: Option<&'a TableSpace>,
-}
-
-impl<'a> TablespaceCompare<'a> {
-    pub fn new(old: Option<&'a TableSpace>, new: Option<&'a TableSpace>) -> Self {
-        Self { old, new }
-    }
-
-    pub fn has_diff(&self) -> bool {
-        match (self.old, self.new) {
-            (Some(old_tablespace), Some(new_tablespace)) => old_tablespace != new_tablespace,
-            (Some(_), None) => true,
-            (None, Some(_)) => true,
-            _ => false,
+/// Compare the tablespace option of 2 objects. Writes the `SET TABLESPACE` command based on the 2
+/// states of the tablespace option.
+fn compare_tablespaces<W>(
+    old: Option<&TableSpace>,
+    new: Option<&TableSpace>,
+    w: &mut W,
+) -> Result<(), PgDiffError>
+where
+    W: Write,
+{
+    match (old, new) {
+        (Some(old_tablespace), Some(new_tablespace)) if old_tablespace != new_tablespace => {
+            write!(w, "SET TABLESPACE {new_tablespace}")?;
         }
-    }
-}
-
-impl<'a> Display for TablespaceCompare<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match (self.old, self.new) {
-            (Some(old_tablespace), Some(new_tablespace)) if old_tablespace != new_tablespace => {
-                write!(f, "SET TABLESPACE {new_tablespace}")
-            }
-            (Some(_), None) => {
-                write!(f, "SET TABLESPACE pg_default")
-            }
-            (None, Some(new_tablespace)) => {
-                write!(f, "SET TABLESPACE {new_tablespace}")
-            }
-            _ => Ok(()),
+        (Some(_), None) => {
+            write!(w, "SET TABLESPACE pg_default")?;
         }
+        (None, Some(new_tablespace)) => {
+            write!(w, "SET TABLESPACE {new_tablespace}")?;
+        }
+        _ => {}
     }
+    Ok(())
 }
 
+/// Trait with a single default method that writes the beginning of an `ALTER` statement based upon
+/// the object's [SqlObject::object_type_name] and [SqlObject::name].
 trait OptionListObject: SqlObject {
+    /// Write the beginning of an `ALTER` statement based upon the object's
+    /// [SqlObject::object_type_name] and [SqlObject::name]. This can be overridden if the object
+    /// requires a more complex `ALTER` statement beginning
     fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
     where
         W: Write,
@@ -417,6 +482,8 @@ trait OptionListObject: SqlObject {
     }
 }
 
+/// Compare the old and new versions of an object's option list and write the required `SET`/`RESET`
+/// statements for the object.
 fn compare_option_lists<A, O, W>(
     object: &A,
     old: Option<&[O]>,
@@ -431,13 +498,13 @@ where
     if let Some(new_options) = new {
         let old_options = old.unwrap_or_default();
         object.write_alter_prefix(w)?;
-        w.write_str("SET (")?;
         write_join!(
             w,
+            "SET (",
             new_options.iter().filter(|p| old_options.contains(*p)),
-            ","
+            ",",
+            ");\n"
         );
-        w.write_str(");\n")?;
     }
     if let Some(old_options) = old {
         let new_options = new.unwrap_or_default();
@@ -456,12 +523,8 @@ where
     Ok(())
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct GenericObject {
-    #[sqlx(json)]
-    name: SchemaQualifiedName,
-}
-
+/// Find the index of the first element found within the `slice` using the `predicate` as an element
+/// selector. Returns [None] if no element is found that matches the `predicate`.
 fn find_index<T, F>(slice: &[T], predicate: F) -> Option<usize>
 where
     F: Fn(&T) -> bool,

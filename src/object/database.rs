@@ -651,7 +651,7 @@ impl SourceControlDatabase {
                     )
                 }
                 Node::CreateSchemaStmt(create_schema) => {
-                    SchemaQualifiedName::from_schema_name(&create_schema.schemaname)
+                    SchemaQualifiedName::new(&create_schema.schemaname, "")
                 }
                 Node::CompositeTypeStmt(composite_type) => {
                     let composite = extract_option(

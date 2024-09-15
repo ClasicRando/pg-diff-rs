@@ -9,7 +9,6 @@ SELECT
 	p.proargnames AS arg_names,
 	pg_catalog.pg_get_function_arguments(p.oid) AS arguments,
 	pg_catalog.pg_get_function_result(p.oid) AS return_type,
-	pl.lanname AS "language",
 	p.procost AS estimated_cost,
 	NULLIF(p.prorows,0) AS estimated_rows,
 	p.prosecdef AS "security",
@@ -25,14 +24,35 @@ SELECT
 		WHEN 'r' THEN 'Restricted'
 		WHEN 'u' THEN 'Unsafe'
 	END AS "parallel",
-	CASE
-		WHEN pl.lanname = 'sql' AND p.prosqlbody IS NOT NULL THEN pg_catalog.pg_get_function_sqlbody(p.oid)
-		WHEN pl.lanname IN ('sql','plpgsql','c','internal') THEN prosrc
-		ELSE NULL
-	END AS "source",
-	p.probin AS bin_info,
+	CASE pl.lanname
+	    WHEN 'sql' THEN JSON_OBJECT(
+	        'type': 'Sql',
+	        'source': CASE
+	            WHEN p.prosqlbody IS NOT NULL THEN pg_catalog.pg_get_function_sqlbody(p.oid)
+	            ELSE p.prosrc
+	        END,
+	        'is_pre_parsed': p.prosqlbody IS NOT NULL
+	    )
+	    WHEN 'plpgsql' THEN JSON_OBJECT(
+	        'type': 'Plpgsql',
+	        'source': p.prosrc
+        )
+	    WHEN 'c' THEN JSON_OBJECT(
+	        'type': 'C',
+	        'name': p.prosrc,
+	        'link_symbol': p.probin
+	    )
+	    WHEN 'internal' THEN JSON_OBJECT(
+	        'type': 'Internal',
+	        'name': p.prosrc
+        )
+	    ELSE JSON_OBJECT(
+	        'type': 'Invalid',
+	        'function_name': p.proname,
+	        'language_name': pl.lanname
+	    )
+	END AS source_code,
 	p.proconfig AS config,
-	p.prosqlbody IS NOT NULL AS is_pre_parsed,
 	TO_JSONB(nd.dependencies || pd.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"
 FROM pg_catalog.pg_proc AS p
 JOIN pg_catalog.pg_namespace AS pn

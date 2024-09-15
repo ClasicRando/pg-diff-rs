@@ -6,6 +6,7 @@ use crate::PgDiffError;
 
 use super::{SchemaQualifiedName, SqlObject};
 
+/// Fetch all extensions found within the current database
 pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError> {
     let extensions_query = include_str!("./../../queries/extensions.pgsql");
     let extensions = match query_as(extensions_query).fetch_all(pool).await {
@@ -18,13 +19,22 @@ pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError
     Ok(extensions)
 }
 
+/// Postgresql extension object
 #[derive(Debug, PartialEq, sqlx::FromRow)]
 pub struct Extension {
+    /// Full name of the extension (never includes a schema name since extensions reside outside a
+    /// schema even though the objects owned by the extension are within a schema)
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
+    /// Version of the extension
     pub(crate) version: String,
+    /// Schema where the extension resides
     pub(crate) schema_name: String,
+    /// True if the extension allows relocating the extension objects into a user defined schema
     pub(crate) is_relocatable: bool,
+    /// Dependencies of the schema. This is only ever populated with other extensions this extension
+    /// depends upon and/or the schema that this extension is located within if it's not public and
+    /// is relocatable.
     #[sqlx(json)]
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }

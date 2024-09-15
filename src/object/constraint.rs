@@ -7,6 +7,7 @@ use sqlx::{query_as, PgPool};
 use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject};
 use crate::{write_join, PgDiffError};
 
+/// Fetch all constraints within the current database for the specified tables (by OID)
 pub async fn get_constraints(
     pool: &PgPool,
     tables: &[Oid],
@@ -26,18 +27,26 @@ pub async fn get_constraints(
     Ok(constraints)
 }
 
-#[derive(Debug, Deserialize, sqlx::FromRow)]
+/// Struct representing a SQL constraint object
+#[derive(Debug, sqlx::FromRow)]
 pub struct Constraint {
+    /// OID of the owning table
     pub(crate) table_oid: Oid,
+    /// Full name of the owning table
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
+    /// Constraint name (local to table)
     pub(crate) name: String,
+    /// Full name of the schema as a part of the table
     #[sqlx(json)]
     pub(crate) schema_qualified_name: SchemaQualifiedName,
+    /// Constraint variant information
     #[sqlx(json)]
     pub(crate) constraint_type: ConstraintType,
+    /// Constraint firing timing
     #[sqlx(json)]
     pub(crate) timing: ConstraintTiming,
+    /// Dependencies of the constraint
     #[sqlx(json)]
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
@@ -170,39 +179,64 @@ impl SqlObject for Constraint {
     }
 }
 
+/// Constraint variants and their respective details
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ConstraintType {
+    /// `CHECK` table/column constraint. If the number of columns is 1, then it's a column
+    /// constraint. Otherwise, it's a table constraint.
     Check {
+        /// Columns associated with the constraint
         columns: Vec<String>,
+        /// Expression executed to validate the constraint criteria is met
         expression: String,
+        /// True if the constraint can be inherited by child tables
         is_inheritable: bool,
     },
+    /// `UNIQUE` table/column constraint. If the number of columns is 1, then it's a column
+    /// constraint. Otherwise, it's a table constraint.
     Unique {
+        /// Columns associated with the constraint
         columns: Vec<String>,
+        /// True if null values in the columns are considered distinct from each other
         are_nulls_distinct: bool,
+        /// Parameters used to store the index
         index_parameters: IndexParameters,
     },
+    /// `PRIMARY KEY` table constraint
     PrimaryKey {
+        /// Columns associated with the constraint
         columns: Vec<String>,
+        /// Parameters used to store the index
         index_parameters: IndexParameters,
     },
+    /// `FOREIGN KEY` table/column constraint. If the number of columns is 1, then it's a column
+    /// constraint. Otherwise, it's a table constraint.
     ForeignKey {
+        /// Columns associated with the constraint in the source table
         columns: Vec<String>,
+        /// Full name of the referenced table
         ref_table: SchemaQualifiedName,
+        /// Columns checked against in the referenced table. Count is always the same as the source
+        /// table columns
         ref_columns: Vec<String>,
+        /// Match type of the foreign key
         match_type: ForeignKeyMatch,
+        /// Action performed when the referenced record is deleted
         on_delete: ForeignKeyAction,
+        /// Action performed when the referenced record is updated
         on_update: ForeignKeyAction,
     },
 }
 
+/// Constraint timing as deferrable or not deferrable
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ConstraintTiming {
     #[default]
     NotDeferrable,
     Deferrable {
+        /// True if the constraint is immediately deferrable
         is_immediate: bool,
     },
 }
@@ -223,28 +257,46 @@ impl Display for ConstraintTiming {
     }
 }
 
+/// Foreign key match options
 #[derive(Debug, Default, Deserialize, PartialEq, strum::AsRefStr)]
 pub enum ForeignKeyMatch {
+    /// If the foreign key is multi-column, all fields must be null to ignore matching. If the
+    /// foreign key is single-column, then this option does not differ from
+    /// [ForeignKeyMatch::Simple]
     #[strum(serialize = "MATCH FULL")]
     Full,
+    /// Available but not yet implemented in postgresql as of Postgres 16
     #[strum(serialize = "MATCH PARTIAL")]
     Partial,
+    /// Any field within the foreign key columns (single or multi) can be null for matching to be
+    /// ignored.
     #[default]
     #[strum(serialize = "MATCH SIMPLE")]
     Simple,
 }
 
+/// Foreign key action when referenced record changes
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ForeignKeyAction {
+    /// Produces an error if the referenced record changes. The foreign key can then be deferred
     #[default]
     NoAction,
+    /// Produces an error if the referenced record changes. The foreign key cannot be deferred
     Restrict,
+    /// Cascade the operation to the source table's record (e.g. delete if referenced record is
+    /// deleted)
     Cascade,
+    /// Set the referencing column(s) in the source table as null
     SetNull {
+        /// Optional subset of columns within the referenced columns to set null. This is only valid
+        /// for `ON DELETE` actions
         columns: Option<Vec<String>>,
     },
+    /// Set the referencing column(s) in the source table as their default value
     SetDefault {
+        /// Optional subset of columns within the referenced columns to set to their default value.
+        /// This is only valid for `ON DELETE` actions
         columns: Option<Vec<String>>,
     },
 }

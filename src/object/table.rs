@@ -4,14 +4,14 @@ use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgRow;
 use sqlx::types::Json;
-use sqlx::{query_as, FromRow, PgPool, Row};
+use sqlx::{query_as, FromRow, PgPool, Row, query_scalar};
 
 use crate::{map_join_slice, write_join, PgDiffError};
 
 use super::sequence::SequenceOptions;
 use super::{
-    compare_option_lists, Collation, GenericObject, OptionListObject,
-    SchemaQualifiedName, SqlObject, StorageParameter, TableSpace, TablespaceCompare,
+    compare_tablespaces, Collation, OptionListObject, SchemaQualifiedName,
+    SqlObject, StorageParameter, TableSpace,
 };
 
 pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, PgDiffError> {
@@ -29,7 +29,7 @@ pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, P
 pub async fn get_table_by_qualified_name(
     pool: &PgPool,
     schema_qualified_name: &SchemaQualifiedName,
-) -> Result<Vec<GenericObject>, PgDiffError> {
+) -> Result<Vec<SchemaQualifiedName>, PgDiffError> {
     let tables_query = include_str!("./../../queries/dependency_tables.pgsql");
     let schema_specified = !schema_qualified_name.schema_name.is_empty();
     let schemas = if schema_specified {
@@ -37,7 +37,7 @@ pub async fn get_table_by_qualified_name(
     } else {
         ["public", "pg_catalog"]
     };
-    let tables = match query_as(tables_query)
+    let tables = match query_scalar(tables_query)
         .bind(schemas)
         .bind(&schema_qualified_name.local_name)
         .fetch_all(pool)
@@ -237,12 +237,7 @@ impl SqlObject for Table {
             }
         }
 
-        let compare_tablespace =
-            TablespaceCompare::new(self.tablespace.as_ref(), new.tablespace.as_ref());
-        if compare_tablespace.has_diff() {
-            writeln!(w, "ALTER TABLE {} {compare_tablespace};", self.name)?;
-        }
-        compare_option_lists(self, self.with.as_deref(), new.with.as_deref(), w)?;
+        compare_tablespaces(self.tablespace.as_ref(), new.tablespace.as_ref(), w)?;
         Ok(())
     }
 

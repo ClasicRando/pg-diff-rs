@@ -31,6 +31,11 @@ pub enum PgDiffError {
     InvalidMigration { object_name: String, reason: String },
     #[error("This can never happen")]
     Infallible(#[from] std::convert::Infallible),
+    #[error("Function `{object_name}` uses a language `{language}` that is not supported")]
+    UnsupportedFunctionLanguage {
+        object_name: SchemaQualifiedName,
+        language: String,
+    },
     #[error("Parse error for {object_name}. {error}")]
     PgQuery {
         object_name: SchemaQualifiedName,

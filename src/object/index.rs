@@ -6,8 +6,8 @@ use sqlx::{query_as, PgPool};
 use crate::PgDiffError;
 
 use super::{
-    compare_option_lists, IndexParameters, OptionListObject, SchemaQualifiedName, SqlObject,
-    TablespaceCompare,
+    compare_option_lists, compare_tablespaces, IndexParameters, OptionListObject,
+    SchemaQualifiedName, SqlObject,
 };
 
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
@@ -74,17 +74,11 @@ impl SqlObject for Index {
                 new.parameters.with.as_deref(),
                 w,
             )?;
-            let compare_tablespace = TablespaceCompare::new(
+            compare_tablespaces(
                 self.parameters.tablespace.as_ref(),
                 new.parameters.tablespace.as_ref(),
-            );
-            if compare_tablespace.has_diff() {
-                writeln!(
-                    w,
-                    "ALTER INDEX {} {compare_tablespace};",
-                    self.schema_qualified_name,
-                )?;
-            }
+                w,
+            )?;
             return Ok(());
         }
 
