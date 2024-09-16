@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 use sqlx::error::BoxDynError;
-use sqlx::Postgres;
+use sqlx::{PgPool, Postgres, query_scalar};
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
 
 use constraint::{get_constraints, Constraint};
@@ -170,6 +170,7 @@ impl Display for IndexParameters {
 /// Union type of the varying SQL object types. This is used to allow returning of a generic SQL
 /// object during iteration because the [SqlObject] trait is not object safe. To reduce the size
 /// of the enum of not copy data, all items are references to their respective [SqlObject].
+#[derive(Debug)]
 pub enum SqlObjectEnum<'o> {
     Schema(&'o Schema),
     Extension(&'o Extension),
@@ -333,6 +334,7 @@ trait SqlObject: PartialEq {
     fn dependencies_met(&self, completed_objects: &[&SchemaQualifiedName]) -> bool {
         self.dependencies()
             .iter()
+            .filter(|d| !d.is_implicit_schema())
             .all(|d| completed_objects.contains(&d))
     }
 }
@@ -398,6 +400,14 @@ impl SchemaQualifiedName {
             schema_name: schema_name.to_owned(),
             local_name: local_name.to_owned(),
         }
+    }
+    
+    /// Returns true if the qualified name is the `public` or `pg_catalog` schemas
+    fn is_implicit_schema(&self) -> bool {
+        if !self.local_name.is_empty() {
+            return false
+        }
+        self.schema_name == PUBLIC_SCHEMA_NAME || self.schema_name == PG_CATALOG_SCHEMA_NAME
     }
 }
 
@@ -534,4 +544,24 @@ where
         .enumerate()
         .filter_map(|(i, item)| if predicate(item) { Some(i) } else { None })
         .next()
+}
+
+const PUBLIC_SCHEMA_NAME: &str = "public";
+const PG_CATALOG_SCHEMA_NAME: &str = "pg_catalog";
+
+async fn check_names_in_database(
+    pool: &PgPool,
+    schema_qualified_name: &SchemaQualifiedName,
+    query: &str,
+) -> Result<Vec<SchemaQualifiedName>, sqlx::Error> {
+    let schemas = if !schema_qualified_name.schema_name.is_empty() {
+        [&schema_qualified_name.schema_name, ""]
+    } else {
+        [PUBLIC_SCHEMA_NAME, PG_CATALOG_SCHEMA_NAME]
+    };
+    query_scalar(query)
+        .bind(schemas)
+        .bind(&schema_qualified_name.local_name)
+        .fetch_all(pool)
+        .await
 }

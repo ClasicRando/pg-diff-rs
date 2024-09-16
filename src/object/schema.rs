@@ -7,6 +7,10 @@ use crate::PgDiffError;
 
 use super::{SchemaQualifiedName, SqlObject};
 
+/// Fetch all schemas found within the current database (including the `public` schema).
+/// 
+/// Excludes `pg_catalog`, `information_schema` and all schemas named like `^pg_toast` and
+/// `^pg_temp`. These schemas always exist but should not be analyzed.  
 pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
     let schemas_query = include_str!("./../../queries/schemas.pgsql");
     let schema_names = match query_as(schemas_query).fetch_all(pool).await {
@@ -19,9 +23,12 @@ pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
     Ok(schema_names)
 }
 
+/// Struct representing a schema SQL object
 #[derive(Debug, PartialEq)]
 pub struct Schema {
+    /// Name of the schema. Local part is always empty
     pub(crate) name: SchemaQualifiedName,
+    /// Owner role of this schema
     pub(crate) owner: String,
 }
 

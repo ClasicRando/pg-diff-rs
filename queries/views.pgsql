@@ -4,7 +4,7 @@ WITH custom_types AS (
     JOIN pg_catalog.pg_namespace AS ctn
         ON ct.typnamespace = ctn.oid
     WHERE
-        ct.typtype IN ('e','r')
+        ct.typtype IN ('e','r','d')
         OR
         (
             ct.typtype = 'c'
@@ -44,7 +44,7 @@ WITH custom_types AS (
 		ON vc.relnamespace = vn.oid
 	WHERE
 		vc.relkind = 'v'
-		-- Exclude tables owned by extensions
+		-- Exclude views owned by extensions
 		AND NOT EXISTS (
 			SELECT NULL
 			FROM pg_catalog.pg_depend AS d

@@ -378,6 +378,12 @@ impl<'n> NodeIter<'n> {
             Node::CompositeTypeStmt(composite_type) => {
                 self.queue_nodes(&composite_type.coldeflist);
             }
+            Node::CreateDomainStmt(create_domain) => {
+                if let Some(name) = &create_domain.type_name {
+                    self.queue_names(&name.names);
+                }
+                self.queue_nodes(&create_domain.constraints);
+            }
             Node::ViewStmt(view) => {
                 if let Some(query) = view.query.as_ref().and_then(|q| q.node.as_ref()) {
                     match query.deparse() {
@@ -710,6 +716,11 @@ impl SourceControlDatabase {
                         message: "Could not extract enum type name".into(),
                     })?
                 }
+                Node::CreateDomainStmt(create_domain) => extract_names(&create_domain.domainname)
+                    .ok_or(PgDiffError::FileQueryParse {
+                        path: path.as_ref().into(),
+                        message: "Could not extract domain type name".into(),
+                    })?,
                 Node::CreateRangeStmt(create_range) => extract_names(&create_range.type_name)
                     .ok_or(PgDiffError::FileQueryParse {
                         path: path.as_ref().into(),
@@ -1016,14 +1027,16 @@ impl Database {
             .collect();
         let udts = get_udts(pool, &schema_names).await?;
         let tables = get_tables(pool, &schema_names).await?;
-        let table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
+        let mut table_oids: Vec<Oid> = tables.iter().map(|t| t.oid).collect();
         let policies = get_policies(pool, &table_oids).await?;
         let constraints = get_constraints(pool, &table_oids).await?;
         let indexes = get_indexes(pool, &table_oids).await?;
-        let triggers = get_triggers(pool, &table_oids).await?;
         let sequences = get_sequences(pool, &schema_names).await?;
         let functions = get_functions(pool, &schema_names).await?;
         let views = get_views(pool, &schema_names).await?;
+        let mut object_oids: Vec<Oid> = views.iter().map(|v| v.oid).collect();
+        object_oids.append(&mut table_oids);
+        let triggers = get_triggers(pool, &object_oids).await?;
         if let Some(index) = find_index(&schemas, |schema| schema.name.schema_name == "public") {
             schemas.remove(index);
         }
@@ -1099,10 +1112,10 @@ impl Database {
                 )
                 .await?
             }
-            for trigger in self.triggers.iter().filter(|t| t.table_oid == table.oid) {
+            for trigger in self.triggers.iter().filter(|t| t.owner_oid == table.oid) {
                 append_create_statements_to_owner_table_file(
                     trigger,
-                    &trigger.owner_table_name,
+                    &trigger.owner_object_name,
                     &output_path,
                 )
                 .await?

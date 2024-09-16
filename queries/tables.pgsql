@@ -80,7 +80,16 @@ SELECT
 	pp.partitioned_parent_table,
     tts.spcname AS "tablespace",
     t.reloptions AS "with",
-    TO_JSONB(nd.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"
+    TO_JSONB(
+        nd.dependencies::json[]
+        || pi.inherited_tables
+        || CASE
+            WHEN pp.partitioned_parent_table IS NOT NULL THEN ARRAY[pp.partitioned_parent_table]
+            ELSE ARRAY[]::json[]
+        END
+        || td.dependencies
+        || tyd.dependencies
+    ) AS "dependencies"
 FROM pg_catalog.pg_class AS t
 JOIN pg_catalog.pg_namespace AS tn
 	ON t.relnamespace = tn.oid
@@ -166,7 +175,7 @@ CROSS JOIN LATERAL (
             AND d.deptype = 'n'
             AND
             (
-                tyd.typtype IN ('e','r')
+                tyd.typtype IN ('e','r','d')
                 OR
                 (
                     tyd.typtype = 'c'

@@ -10,6 +10,7 @@ use super::{
     SchemaQualifiedName, SqlObject,
 };
 
+/// Fetch all indexes associated with the tables specified (as table OID)
 pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, PgDiffError> {
     let indexes_query = include_str!("./../../queries/indexes.pgsql");
     let indexes = match query_as(indexes_query).bind(tables).fetch_all(pool).await {
@@ -22,17 +23,26 @@ pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, Pg
     Ok(indexes)
 }
 
+/// Struct representing a SQL index object
 #[derive(Debug, sqlx::FromRow)]
 pub struct Index {
+    /// Owner table's OID
     pub(crate) table_oid: Oid,
+    /// Owner table's full name
     #[sqlx(json)]
     pub(crate) owner_table_name: SchemaQualifiedName,
+    /// Full name of the index where the local part starts with the table name followed by the index
+    /// name to clarify the owner table
     #[sqlx(json)]
     pub(crate) schema_qualified_name: SchemaQualifiedName,
+    /// Columns specified in the index
     pub(crate) columns: Vec<String>,
+    /// Full SQL text of the index definition as found by `pg_catalog.pg_get_indexdef`
     pub(crate) definition_statement: String,
+    /// Optional parameters of the index
     #[sqlx(flatten)]
     pub(crate) parameters: IndexParameters,
+    /// Dependencies of the index. This is always just the owner table name
     #[sqlx(json)]
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }

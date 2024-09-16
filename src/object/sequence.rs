@@ -9,6 +9,8 @@ use crate::PgDiffError;
 
 use super::{SchemaQualifiedName, SqlObject};
 
+/// Fetch all sequences found within the schemas referenced. Ignores any index that is created when
+/// an identity column exists.
 pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequence>, PgDiffError> {
     let sequence_query = include_str!("./../../queries/sequences.pgsql");
     let sequences = match query_as(sequence_query).bind(schemas).fetch_all(pool).await {
@@ -21,12 +23,20 @@ pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequen
     Ok(sequences)
 }
 
+/// Struct representing a SQL sequence object
 #[derive(Debug, PartialEq)]
 pub struct Sequence {
+    /// Full name of the sequence
     pub(crate) name: SchemaQualifiedName,
+    /// Name of the database referenced in the sequence. The value is always `smallint`, ` integer`
+    /// or `bigint`
     pub(crate) data_type: String,
+    /// Optional owner of the sequence
     pub(crate) owner: Option<SequenceOwner>,
+    /// Options available for the sequence
     pub(crate) sequence_options: SequenceOptions,
+    /// Dependencies of the sequence. If the sequence has an owner, the table it references is the
+    /// only dependency. Otherwise, the sequence's schema is the only dependency.
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
 
@@ -134,13 +144,20 @@ impl SqlObject for Sequence {
     }
 }
 
+/// Options that can be specified for a sequence
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SequenceOptions {
+    /// Value to increment the sequence after value fetching. This value can be negative.
     pub(crate) increment: i64,
+    /// Min value that this sequence can generate
     pub(crate) min_value: i64,
+    /// Max value that this sequence can generate
     pub(crate) max_value: i64,
+    /// Value that the sequence starts with
     pub(crate) start_value: i64,
+    /// Number of values the sequence pre-allocates
     pub(crate) cache: i64,
+    /// If true, the sequence wraps once the max/min value is reached
     pub(crate) is_cycle: bool,
 }
 
@@ -175,9 +192,12 @@ impl SequenceOptions {
     }
 }
 
+/// Owner details of a sequence
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct SequenceOwner {
+    /// Full name of owning table
     pub(crate) table_name: SchemaQualifiedName,
+    /// Column within the owning table that is linked to the sequence
     pub(crate) column_name: String,
 }
 

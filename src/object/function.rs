@@ -5,16 +5,13 @@ use lazy_regex::regex;
 use serde::Deserialize;
 use sqlx::error::BoxDynError;
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
-use sqlx::{query_as, query_scalar, Decode, PgPool, Postgres};
+use sqlx::{query_as, Decode, PgPool, Postgres};
 
 use crate::object::plpgsql::{parse_plpgsql_function, PlPgSqlFunction};
 use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
-use super::{compare_option_lists, is_verbose, OptionListObject, SchemaQualifiedName, SqlObject};
-
-const PUBLIC_SCHEMA_NAME: &str = "public";
-const PG_CATALOG_SCHEMA_NAME: &str = "pg_catalog";
+use super::{check_names_in_database, compare_option_lists, is_verbose, OptionListObject, PG_CATALOG_SCHEMA_NAME, SchemaQualifiedName, SqlObject};
 
 /// Fetch all functions within the `schemas` specified
 pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Function>, PgDiffError> {
@@ -31,23 +28,6 @@ pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Functi
         }
     };
     Ok(functions)
-}
-
-async fn check_names_in_database(
-    pool: &PgPool,
-    schema_qualified_name: &SchemaQualifiedName,
-    query: &str,
-) -> Result<Vec<SchemaQualifiedName>, sqlx::Error> {
-    let schemas = if !schema_qualified_name.schema_name.is_empty() {
-        [&schema_qualified_name.schema_name, ""]
-    } else {
-        [PUBLIC_SCHEMA_NAME, PG_CATALOG_SCHEMA_NAME]
-    };
-    query_scalar(query)
-        .bind(schemas)
-        .bind(&schema_qualified_name.local_name)
-        .fetch_all(pool)
-        .await
 }
 
 /// Fetch all functions that match the provided `schema_qualified_name`. If the schema portion of
@@ -209,7 +189,7 @@ pub struct Function {
 impl Function {
     /// Attempt to extract additional dependencies if the source code of the procedure is executed
     /// at runtime.
-    /// 
+    ///
     /// This is only valid for non-parsed SQL and pl/pgsql functions since the code is only
     /// evaluated at function creation and execution time (i.e. dependencies are not tracked which
     /// is the case for parsed SQL functions).
@@ -219,9 +199,13 @@ impl Function {
     ///     is invalid)
     /// - searching the database for SQL objects referenced fails
     pub async fn extract_more_dependencies(&mut self, pool: &PgPool) -> Result<(), PgDiffError> {
-        if let FunctionSourceCode::Sql { source, is_pre_parsed } = &self.source_code {
+        if let FunctionSourceCode::Sql {
+            source,
+            is_pre_parsed,
+        } = &self.source_code
+        {
             if *is_pre_parsed {
-                return Ok(())
+                return Ok(());
             }
             let result = pg_query::parse(source.trim()).map_err(|e| PgDiffError::PgQuery {
                 object_name: self.name.clone(),
@@ -270,7 +254,7 @@ impl Function {
     }
 
     /// Add additional dependencies to the function object.
-    /// 
+    ///
     /// Only cases where a single object is found for a given qualified name are actually added. If
     /// multiple objects are found then they are ignored since we do not currently support checking
     /// function overloads.
@@ -329,7 +313,7 @@ impl Function {
     }
 
     /// Write the `CREATE` statement to the writable object.
-    /// 
+    ///
     /// Optionally modify code if `rewrite_code` is true. This option should only be used when
     /// trying to analyze functions because otherwise, the function created won't match the intended
     /// source code.
@@ -522,8 +506,8 @@ impl SqlObject for Function {
 }
 
 /// Function source code variants.
-/// 
-/// Variants are defined by language and include the options valid for that language. 
+///
+/// Variants are defined by language and include the options valid for that language.
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(tag = "type")]
 pub enum FunctionSourceCode {
@@ -541,7 +525,7 @@ pub enum FunctionSourceCode {
         /// pl/pgsql source code
         source: String,
     },
-    /// Dynamically loaded C code 
+    /// Dynamically loaded C code
     C {
         /// C function name to be invoked
         name: String,
@@ -598,7 +582,10 @@ impl FunctionSourceCode {
                 }
                 w.write_str("$function$;")?;
             }
-            Self::C { name, link_symbol: bin_info } => writeln!(w, "AS '{bin_info}', '{}';", name)?,
+            Self::C {
+                name,
+                link_symbol: bin_info,
+            } => writeln!(w, "AS '{bin_info}', '{}';", name)?,
             Self::Internal { name } => {
                 return Err(PgDiffError::UnsupportedFunctionLanguage {
                     object_name: SchemaQualifiedName::from(name),

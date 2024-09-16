@@ -21,6 +21,11 @@ pub enum PgDiffError {
     Fmt(#[from] std::fmt::Error),
     #[error("{0}")]
     General(String),
+    #[error("UDT `{object_name}` is of type {type_name} that is not supported")]
+    UnsupportedUdtType {
+        object_name: SchemaQualifiedName,
+        type_name: String,
+    },
     #[error("For {name}, found new type '{new_type}' that is incompatible with existing type {original_type}")]
     IncompatibleTypes {
         name: SchemaQualifiedName,

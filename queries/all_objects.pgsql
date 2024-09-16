@@ -9,7 +9,7 @@ FROM (
     SELECT t.oid, 'pg_type' AS "catalog", t.typname AS local_name, t.typnamespace AS namespace_oid
     FROM pg_catalog.pg_type AS t
     WHERE
-        t.typtype IN ('e','r')
+        t.typtype IN ('e','r','d')
         OR
         (
             t.typtype = 'c'

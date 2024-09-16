@@ -1,11 +1,13 @@
 use std::fmt::Write;
 
+use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
 use crate::{write_join, PgDiffError};
 
 use super::{compare_option_lists, OptionListObject, SchemaQualifiedName, SqlObject};
 
+/// Fetch all views found within the specified schemas
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
     let views_query = include_str!("./../../queries/views.pgsql");
     let views = match query_as(views_query).bind(schemas).fetch_all(pool).await {
@@ -18,15 +20,33 @@ pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgD
     Ok(views)
 }
 
-#[derive(Debug, PartialEq, sqlx::FromRow)]
+/// Struct representing a SQL view
+#[derive(Debug, sqlx::FromRow)]
 pub struct View {
+    /// View OID
+    pub(crate) oid: Oid,
+    /// Full name of the view
     #[sqlx(json)]
     pub(crate) name: SchemaQualifiedName,
+    /// Columns specified for the view
     pub(crate) columns: Option<Vec<String>>,
+    /// Query representing the view result
     pub(crate) query: String,
+    /// View options supplied. All items are key value pairs separated by `=`
     pub(crate) options: Option<Vec<String>>,
+    /// Dependencies of the view
     #[sqlx(json)]
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
+}
+
+impl PartialEq for View {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.columns == other.columns
+            && self.query == other.query
+            && self.options == other.options
+    }
 }
 
 impl OptionListObject for View {}

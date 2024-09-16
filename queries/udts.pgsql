@@ -5,6 +5,11 @@ WITH custom_types AS (
         ct.typname,
         ct.typrelid,
         ctn.nspname,
+        ct.typnotnull,
+        ctc.collname,
+        ct.typdefault,
+        ct.typbasetype,
+        ct.typtypmod,
 		ARRAY[JSON_OBJECT(
             'schema_name': quote_ident(ctn.nspname),
             'local_name': ''
@@ -12,8 +17,10 @@ WITH custom_types AS (
     FROM pg_catalog.pg_type AS ct
     JOIN pg_catalog.pg_namespace AS ctn
         ON ct.typnamespace = ctn.oid
+    LEFT JOIN pg_catalog.pg_collation AS ctc
+        ON ct.typcollation = ctc.oid
     WHERE
-        ct.typtype IN ('e','r')
+        ct.typtype IN ('e','r','d')
         OR
         (
             ct.typtype = 'c'
@@ -75,6 +82,30 @@ SELECT
                 WHERE
                     t.oid = tr.rngtypid
             )
+        )
+        WHEN 'd' THEN JSON_OBJECT(
+            'type': 'Domain',
+            'data_type': pg_catalog.format_type(t.typbasetype, t.typtypmod),
+            'collation': t.collname,
+            'default': t.typdefault,
+            'is_not_null': t.typnotnull,
+            'checks': (
+                SELECT
+                    ARRAY_AGG(JSON_OBJECT(
+                        'name': dc.conname,
+                        'expression': pg_get_constraintdef(dc.oid)
+                    ) ORDER BY dc.conname)
+                FROM pg_catalog.pg_constraint dc
+                WHERE
+                    dc.contypid = t.oid
+            )
+        )
+        WHEN 'b' THEN JSON_OBJECT('type': 'Base')
+        WHEN 'p' THEN JSON_OBJECT(
+            'type': 'Pseudo'
+        )
+        WHEN 'm' THEN JSON_OBJECT(
+            'type': 'Multirange'
         )
     END) AS "udt_type",
     TO_JSONB(t.dependencies || td.dependencies || tyd.dependencies) AS "dependencies"

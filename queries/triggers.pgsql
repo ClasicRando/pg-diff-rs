@@ -5,12 +5,12 @@ WITH simple_table_columns AS (
 ), table_triggers AS (
     SELECT
         t.oid,
-        tc.oid table_oid,
+        tc.oid owner_oid,
         t.tgname AS "name",
         TO_JSONB(JSON_OBJECT(
             'schema_name': quote_ident(ton.nspname),
             'local_name': quote_ident(tc.relname)
-        )) AS owner_table_name,
+        )) AS owner_object_name,
         TO_JSONB(JSON_OBJECT(
             'schema_name': quote_ident(ton.nspname),
             'local_name': quote_ident(tc.relname)||'.'||quote_ident(t.tgname)
@@ -54,10 +54,10 @@ WITH simple_table_columns AS (
 )
 SELECT
     tt.oid,
-    tt.table_oid,
+    tt.owner_oid,
     tt.name,
     tt.schema_qualified_name,
-    tt.owner_table_name,
+    tt.owner_object_name,
     CASE
         WHEN tt.is_before THEN 'before'
         WHEN tt.is_instead THEN 'instead-of'
@@ -87,16 +87,16 @@ SELECT
     tt.when_expression AS when_expression,
     tt.function_name AS function_name,
     tt.tgargs AS function_args,
-    TO_JSONB(ARRAY[owner_table_name, function_name]) AS "dependencies"
+    TO_JSONB(ARRAY[owner_object_name, function_name]) AS "dependencies"
 FROM table_triggers tt
 WHERE
-    tt.table_oid = ANY($1)
-    -- Exclude tables owned by extensions
+    tt.owner_oid = ANY($1)
+    -- Exclude triggers owned by extensions
     AND NOT EXISTS (
         SELECT NULL
         FROM pg_catalog.pg_depend AS d
         WHERE
             d.classid = 'pg_class'::REGCLASS
-            AND d.objid = tt.table_oid
+            AND d.objid = tt.owner_oid
             AND d.deptype = 'e'
     );

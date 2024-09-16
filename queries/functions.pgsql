@@ -124,7 +124,7 @@ CROSS JOIN LATERAL (
             AND d.deptype = 'n'
             AND
             (
-                tyd.typtype IN ('e','r')
+                tyd.typtype IN ('e','r','d')
                 OR
                 (
                     tyd.typtype = 'c'
