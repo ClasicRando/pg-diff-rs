@@ -35,7 +35,7 @@ impl DatabaseMigration {
     /// from the target database and the `source_control_directory` to collect source control SQL
     /// files for generating the desired new state of the target database.
     ///
-    /// # Errors
+    /// ## Errors
     /// if database scraping fails (see [Database::from_connection]) or source control file
     /// analyzing fails (see [SourceControlDatabase::from_directory]).
     pub async fn new<P>(pool: PgPool, source_control_directory: P) -> Result<Self, PgDiffError>
@@ -59,7 +59,7 @@ impl DatabaseMigration {
     /// for metadata and compares the temp database to the current state of the target database to
     /// find the steps required for migration.
     ///
-    /// # Errors
+    /// ## Errors
     /// See [SourceControlDatabase::apply_to_temp_database]
     /// See [SourceControlDatabase::scrape_temp_database]
     pub async fn plan_migration(&mut self) -> Result<String, PgDiffError> {
@@ -190,24 +190,24 @@ impl<'n> NodeIter<'n> {
     }
 
     fn parse_inline_plpgsql_code(&mut self, code: &str) {
-        match parse_plpgsql_function(code) {
-            Ok(functions) => {
-                for function in functions {
-                    match function.get_objects() {
-                        Ok(objects) => {
-                            self.queued_elements.append(&mut VecDeque::from(objects));
-                        }
-                        Err(error) => {
-                            if is_verbose() {
-                                println!("Skipping plpg/sq; code block since the source text could not be parsed for objects. {error}")
-                            }
-                        }
-                    }
-                }
-            }
+        let functions = match parse_plpgsql_function(code) {
+            Ok(functions) => functions,
             Err(error) => {
                 if is_verbose() {
                     println!("Skipping plpg/sql code block since the source text could not be parsed. {error}\n")
+                }
+                return;
+            }
+        };
+        for function in functions {
+            match function.get_objects() {
+                Ok(objects) => {
+                    self.queued_elements.append(&mut VecDeque::from(objects));
+                }
+                Err(error) => {
+                    if is_verbose() {
+                        println!("Skipping plpg/sq; code block since the source text could not be parsed for objects. {error}")
+                    }
                 }
             }
         }
@@ -593,7 +593,7 @@ impl SourceControlDatabase {
     ///     * Main object created/altered by the query (found from the root node)
     ///     * All dependencies of the query (found by expanding [NodeIter])
     ///
-    /// # Errors
+    /// ## Errors
     /// If an IO error occurs trying to read the file path or an error occurs attempting to read the
     /// AST returned from query parsing. Querying parsing can fail for various reasons, but it
     /// should only fail if the SQL code is not syntactically valid.
@@ -790,7 +790,7 @@ impl SourceControlDatabase {
     ///
     /// For more details of iteration, see [StatementIter].
     ///
-    /// # Errors
+    /// ## Errors
     /// - Executing the statement query returns an error that cannot be parsed into a
     ///     [PgDatabaseError]
     /// - After iterating over the ordered statements, the iterator still has remaining statements.
@@ -1011,7 +1011,7 @@ impl Database {
     /// to figured out dependencies. Function analysis is not guaranteed to work so errors are
     /// written to STDOUT if the verbose flag is active.
     ///
-    /// # Errors
+    /// ## Errors
     /// - Errors from the SQL queries executed to fetch metadata
     /// - SQL query parsing if a function is a dynamic SQL query but the query is invalid
     /// - A function is not SQL or pl/pgsql (other languages are not supported)
@@ -1075,7 +1075,7 @@ impl Database {
     /// - function, 1 per function
     /// - procedure, 1 per procedure
     ///
-    /// # Errors
+    /// ## Errors
     /// - General format errors when attempting to write the statements to a string buffer
     /// - General IO errors when writing the string buffer to the file
     ///

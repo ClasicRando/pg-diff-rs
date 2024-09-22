@@ -194,7 +194,7 @@ impl Function {
     /// evaluated at function creation and execution time (i.e. dependencies are not tracked which
     /// is the case for parsed SQL functions).
     ///
-    /// # Errors
+    /// ## Errors
     /// - if the SQL source code cannot be analyzed (this should not happen unless the source code
     ///     is invalid)
     /// - searching the database for SQL objects referenced fails

@@ -348,7 +348,7 @@ impl Column {
 
     /// Write an `ALTER TABLE {} ALTER COLUMN` statement for this column to the writeable object
     /// 
-    /// # Errors
+    /// ## Errors
     /// - if the data type of the column has changed between migrations
     /// - if the column becomes a generated column
     /// - if the column has a new generation expression
