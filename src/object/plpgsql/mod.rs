@@ -7,6 +7,9 @@ use serde_repr::Deserialize_repr;
 use crate::object::{SchemaQualifiedName, BUILT_IN_FUNCTIONS, BUILT_IN_NAMES};
 use crate::PgDiffError;
 
+#[cfg(test)]
+mod test;
+
 /// Parse the pl/pgsql function declaration to 1 or more [PlPgSqlFunction]s
 ///
 /// ## Errors
@@ -144,13 +147,13 @@ pub enum PlPgSqlExpr {
 
 impl ObjectNode for PlPgSqlExpr {
     /// Extract the objects referenced within this expression.
-    /// 
+    ///
     /// These expressions can be regular DML statements, variable assignment or simple expressions
     /// such as `TRIM(x)`. If the statement is not a DML statement, the actual expression part will
     /// be prefixed with `select {expression}` to pass that expression to the SQL parser for
     /// evaluation. The result of the parsing is then checks for tables and function that are
     /// referenced.
-    /// 
+    ///
     /// ## Errors
     /// If the SQL query parsing fails
     fn extract_objects(&self, buffer: &mut Vec<SchemaQualifiedName>) -> Result<(), Error> {
@@ -233,9 +236,7 @@ impl ObjectNode for PlPgSqlCaseWhen {
 #[derive(Debug, Deserialize)]
 pub enum PlPgSqlOpenCursor {
     /// Simple query used to open the cursor. No parameters are accepted.
-    Query {
-        query: PlPgSqlExpr,
-    },
+    Query { query: PlPgSqlExpr },
     /// Dynamic expression executed with a variable number of parameters supplied.
     Execute {
         #[serde(rename = "dynquery")]
@@ -429,7 +430,7 @@ pub enum PlPgSqlStatement {
         /// 1 or more statements executed if the `condition` is true
         then_body: Vec<PlPgSqlStatement>,
         /// Optional `ELSIF` blocks
-        #[serde(default)]
+        #[serde(rename = "elsif_list", default)]
         elsif_body: Option<Vec<PlPgSqlElsIf>>,
         /// Optional `ELSE` block as zero or more statements
         #[serde(default)]
@@ -473,7 +474,7 @@ pub enum PlPgSqlStatement {
         label: Option<String>,
         /// Condition tested on each iteration to set an automated break condition
         #[serde(rename = "cond")]
-        condition: String,
+        condition: PlPgSqlExpr,
         /// 1 or more statements executed within the loop block
         body: Vec<PlPgSqlStatement>,
     },
@@ -494,10 +495,10 @@ pub enum PlPgSqlStatement {
         /// Optional step specified with `BY expression`. [None] means default of 1
         #[serde(default)]
         step: Option<PlPgSqlExpr>,
-        /// 1 if the `REVERSE` keyword is used to perform the loop in the reverse order. 0 means
-        /// regular ascending order. The C API using `int` so we kept it as an `i32`.
+        /// True if the `REVERSE` keyword is used to perform the loop in the reverse order. False
+        /// means regular ascending order.
         #[serde(default)]
-        reverse: i32,
+        reverse: bool,
         /// 1 or more statements executed within the loop block
         body: Vec<PlPgSqlStatement>,
     },
@@ -551,7 +552,7 @@ pub enum PlPgSqlStatement {
     },
     /// `EXIT` or `CONTINUE` statements within a loop. They are grouped together because the syntax
     /// is the same, they just perform different actions within the loop. The 2 options are
-    /// distinguished by the `is_exit` field. 
+    /// distinguished by the `is_exit` field.
     #[serde(rename = "PLpgSQL_stmt_exit")]
     ExitOrContinue {
         #[serde(rename = "lineno")]
@@ -1012,7 +1013,7 @@ pub enum PlPgSqlFunction {
         /// Variable number for the `NEW` variable available to trigger function. 0 when not a
         /// trigger function.
         #[serde(rename = "new_varno", default)]
-        new_varialbe_no: u32,
+        new_variable_no: u32,
         /// Variable number for the `OLD` variable available to trigger function. 0 when not a
         /// trigger function.
         #[serde(rename = "old_varno", default)]

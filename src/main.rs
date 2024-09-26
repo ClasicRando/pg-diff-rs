@@ -60,6 +60,12 @@ impl From<&str> for PgDiffError {
     }
 }
 
+impl From<String> for PgDiffError {
+    fn from(value: String) -> Self {
+        Self::General(value)
+    }
+}
+
 fn map_join_slice<I, F: Fn(&I, &mut W) -> Result<(), std::fmt::Error>, W: Write>(
     slice: &[I],
     map: F,
