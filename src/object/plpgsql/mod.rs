@@ -1,7 +1,7 @@
 use lazy_regex::regex;
 use pg_query::Error;
 
-use serde::Deserialize;
+use serde::{Deserialize};
 use serde_repr::Deserialize_repr;
 
 use crate::object::{SchemaQualifiedName, BUILT_IN_FUNCTIONS, BUILT_IN_NAMES};
@@ -19,8 +19,8 @@ pub fn parse_plpgsql_function(function_code: &str) -> Result<Vec<PlPgSqlFunction
     let parse_result = pg_query::parse_plpgsql(function_code).map_err(|error| {
         PgDiffError::General(format!("Could not parse plpg/sql function. {error}"))
     })?;
-    serde_json::from_value(parse_result)
-        .map_err(|error| PgDiffError::General(format!("Could not parse plpg/sql ast. {error}")))
+    serde_json::from_value(parse_result.clone())
+        .map_err(|error| PgDiffError::General(format!("Could not parse plpg/sql ast. {error}\n{parse_result}")))
 }
 
 /// Trait to designate a type that can extract object name referenced within the node into a
@@ -134,13 +134,25 @@ impl ObjectNode for PlPgSqlVariable {
     }
 }
 
+#[derive(Debug, Default, Deserialize_repr, PartialEq)]
+#[repr(u8)]
+pub enum RawParseMode {
+    Default = 0,
+    TypeName = 1,
+    #[default]
+    PlPgSqlExpr = 2,
+    PlPgSqlAssign1 = 3,
+    PlPgSqlAssign2 = 4,
+    PlPgSqlAssign3 = 5,
+}
+
 /// Simple SQL expression within a pl/pgsql block
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub enum PlPgSqlExpr {
     #[serde(rename = "PLpgSQL_expr")]
     Inner {
         #[serde(rename = "parseMode")]
-        parse_mode: i32,
+        parse_mode: RawParseMode,
         query: String,
     },
 }
@@ -372,7 +384,7 @@ impl ObjectNode for PlPgSqlExceptionBlock {
 }
 
 /// Raise statement level variants as integer codes
-#[derive(Debug, Deserialize_repr)]
+#[derive(Debug, Deserialize_repr, PartialEq)]
 #[repr(u8)]
 pub enum PlPgSqlRaiseLogLevel {
     Error = 21,
@@ -381,6 +393,15 @@ pub enum PlPgSqlRaiseLogLevel {
     Info = 17,
     Log = 15,
     Debug = 14,
+}
+
+/// Cursor options as integers
+#[derive(Debug, Deserialize_repr, PartialEq)]
+#[repr(u8)]
+pub enum CursorOption {
+    None = 0,
+    Scroll = 2,
+    NoScroll = 4,
 }
 
 /// All pl/pgsql statement types as defined by `pg_query`
@@ -636,7 +657,7 @@ pub enum PlPgSqlStatement {
         condition: PlPgSqlExpr,
         /// Optional message included in the assertion error if the `condition` is false
         #[serde(default)]
-        message: Option<String>,
+        message: Option<PlPgSqlExpr>,
     },
     /// Execute a static SQL command
     #[serde(rename = "PLpgSQL_stmt_execsql")]
@@ -689,9 +710,6 @@ pub enum PlPgSqlStatement {
         /// Optional label for operations against a named loop
         #[serde(default)]
         label: Option<String>,
-        /// Record or row type variable used to store each query row result
-        #[serde(rename = "var")]
-        loop_variable: PlPgSqlVariable,
         /// Variable used to store each row of the query returned
         var: PlPgSqlVariable,
         /// 1 or more statements executed within the loop block
@@ -711,7 +729,7 @@ pub enum PlPgSqlStatement {
         is_stacked: bool,
         /// 1 or more diagnostics items present
         #[serde(rename = "diag_items")]
-        diagnotics_items: Vec<PlPgSqlDiagnosticsItem>,
+        diagnostics_items: Vec<PlPgSqlDiagnosticsItem>,
     },
     /// `OPEN` cursor statement
     #[serde(rename = "PLpgSQL_stmt_open")]
@@ -719,7 +737,7 @@ pub enum PlPgSqlStatement {
         #[serde(rename = "lineno")]
         line_no: u32,
         cursor_var: u32,
-        cursor_options: i32,
+        cursor_options: CursorOption,
         /// Cursor open query options
         #[serde(flatten)]
         query: PlPgSqlOpenCursor,
@@ -772,12 +790,11 @@ pub enum PlPgSqlStatement {
         #[serde(rename = "lineno")]
         line_no: u32,
         /// SQL expression executed as part of the statement execution
+        #[serde(rename = "expr")]
         expression: PlPgSqlExpr,
         /// True if `CALL` statement. Otherwise, it's a `DO` statement.
+        #[serde(default)]
         is_call: bool,
-        /// Optional output parameters from the stored procedure call if `CALL` statement
-        #[serde(rename = "target")]
-        target: Option<PlPgSqlVariable>,
     },
     /// `COMMIT` statement
     #[serde(rename = "PLpgSQL_stmt_commit")]
@@ -799,7 +816,7 @@ pub enum PlPgSqlStatement {
 
 /// `RAISE` statement option as a key value pair. The key is a known option type and the value is
 /// an SQL expression.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub enum PlPgSqlRaiseOption {
     #[serde(rename = "PLpgSQL_raise_option")]
     Inner {
@@ -819,25 +836,17 @@ impl ObjectNode for PlPgSqlRaiseOption {
 }
 
 /// Variant of option names supplied to a pl/pgsql `RAISE` statement
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize_repr, PartialEq)]
+#[repr(u8)]
 pub enum PlPgSqlRaiseOptionType {
-    #[serde(rename = "PLPGSQL_RAISEOPTION_ERRCODE")]
-    ErrorCode,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_MESSAGE")]
+    ErrorCode = 0,
     Message,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_DETAIL")]
     Detail,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_HINT")]
     Hint,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_COLUMN")]
     Column,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_COLUMN")]
     Constraint,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_DATATYPE")]
     DataType,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_TABLE")]
     Table,
-    #[serde(rename = "PLPGSQL_RAISEOPTION_SCHEMA")]
     Schema,
 }
 
@@ -965,13 +974,11 @@ impl ObjectNode for PlPgSqlStatement {
                 params.extract_objects(buffer)?;
             }
             PlPgSqlStatement::DynForS {
-                loop_variable,
                 body,
                 query,
                 params,
                 ..
             } => {
-                loop_variable.extract_objects(buffer)?;
                 body.extract_objects(buffer)?;
                 query.extract_objects(buffer)?;
                 params.extract_objects(buffer)?;
@@ -993,10 +1000,9 @@ impl ObjectNode for PlPgSqlStatement {
                 expression.extract_objects(buffer)?;
             }
             PlPgSqlStatement::Call {
-                expression, target, ..
+                expression, ..
             } => {
                 expression.extract_objects(buffer)?;
-                target.extract_objects(buffer)?;
             }
             PlPgSqlStatement::Commit { .. } => {}
             PlPgSqlStatement::Rollback { .. } => {}

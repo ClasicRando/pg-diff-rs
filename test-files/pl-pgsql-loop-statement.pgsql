@@ -1,4 +1,5 @@
 create function test_func()
+returns void
 language plpgsql
 as $$
 declare
