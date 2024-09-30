@@ -18,7 +18,7 @@ pub async fn get_sequences(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Sequen
         Err(error) => {
             println!("Could not load sequences");
             return Err(error.into());
-        }
+        },
     };
     Ok(sequences)
 }
@@ -125,14 +125,14 @@ impl SqlObject for Sequence {
         match (&self.owner, &new.owner) {
             (Some(old_owner), Some(new_owner)) if old_owner != new_owner => {
                 write!(w, " OWNED BY {new_owner}")?;
-            }
+            },
             (Some(_), None) => {
                 w.write_str(" OWNED BY NONE")?;
-            }
+            },
             (None, Some(new_owner)) => {
                 write!(w, " OWNED BY {new_owner}")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         w.write_str(";\n")?;
         Ok(())

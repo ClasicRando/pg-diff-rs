@@ -1,7 +1,9 @@
+#![allow(unused)]
+
 use lazy_regex::regex;
 use pg_query::Error;
 
-use serde::{Deserialize};
+use serde::Deserialize;
 use serde_repr::Deserialize_repr;
 
 use crate::object::{SchemaQualifiedName, BUILT_IN_FUNCTIONS, BUILT_IN_NAMES};
@@ -19,8 +21,11 @@ pub fn parse_plpgsql_function(function_code: &str) -> Result<Vec<PlPgSqlFunction
     let parse_result = pg_query::parse_plpgsql(function_code).map_err(|error| {
         PgDiffError::General(format!("Could not parse plpg/sql function. {error}"))
     })?;
-    serde_json::from_value(parse_result.clone())
-        .map_err(|error| PgDiffError::General(format!("Could not parse plpg/sql ast. {error}\n{parse_result}")))
+    serde_json::from_value(parse_result.clone()).map_err(|error| {
+        PgDiffError::General(format!(
+            "Could not parse plpg/sql ast. {error}\n{parse_result}"
+        ))
+    })
 }
 
 /// Trait to designate a type that can extract object name referenced within the node into a
@@ -268,14 +273,14 @@ impl ObjectNode for PlPgSqlOpenCursor {
         match self {
             PlPgSqlOpenCursor::Query { query } => {
                 query.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlOpenCursor::Execute { dyn_query, params } => {
                 dyn_query.extract_objects(buffer)?;
                 params.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlOpenCursor::Args { query_args } => {
                 query_args.extract_objects(buffer)?;
-            }
+            },
         }
         Ok(())
     }
@@ -322,7 +327,7 @@ impl ObjectNode for PlPgSqlException {
 
 /// Diagnostic details to fetch as part of a `GET DIAGNOSTICS` statement
 #[derive(Debug, Deserialize)]
-pub enum PlPgSqlDiagnoticsKind {
+pub enum PlPgSqlDiagnosticsKind {
     #[serde(rename = "ROW_COUNT")]
     RowCount,
     #[serde(rename = "PG_ROUTINE_OID")]
@@ -356,7 +361,7 @@ pub enum PlPgSqlDiagnoticsKind {
 pub enum PlPgSqlDiagnosticsItem {
     #[serde(rename = "PLpgSQL_diag_item")]
     Inner {
-        kind: PlPgSqlDiagnoticsKind,
+        kind: PlPgSqlDiagnosticsKind,
         target: u32,
     },
 }
@@ -720,7 +725,7 @@ pub enum PlPgSqlStatement {
         #[serde(default)]
         params: Option<Vec<PlPgSqlExpr>>,
     },
-    /// `GET DIAGNOTICS` statement
+    /// `GET DIAGNOSTICS` statement
     #[serde(rename = "PLpgSQL_stmt_getdiag")]
     GetDiagnostics {
         #[serde(rename = "lineno")]
@@ -858,10 +863,10 @@ impl ObjectNode for PlPgSqlStatement {
             } => {
                 body.extract_objects(buffer)?;
                 exceptions.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Assign { expression, .. } => {
                 expression.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::If {
                 condition,
                 then_body,
@@ -873,7 +878,7 @@ impl ObjectNode for PlPgSqlStatement {
                 then_body.extract_objects(buffer)?;
                 elsif_body.extract_objects(buffer)?;
                 else_body.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Case {
                 test_expression,
                 whens,
@@ -883,13 +888,13 @@ impl ObjectNode for PlPgSqlStatement {
                 test_expression.extract_objects(buffer)?;
                 whens.extract_objects(buffer)?;
                 else_statements.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Loop { body, .. } => {
                 body.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::While { body, .. } => {
                 body.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ForI {
                 var,
                 lower,
@@ -903,14 +908,14 @@ impl ObjectNode for PlPgSqlStatement {
                 upper.extract_objects(buffer)?;
                 step.extract_objects(buffer)?;
                 body.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ForS {
                 var, body, query, ..
             } => {
                 var.extract_objects(buffer)?;
                 body.extract_objects(buffer)?;
                 query.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ForC {
                 var,
                 body,
@@ -920,22 +925,22 @@ impl ObjectNode for PlPgSqlStatement {
                 var.extract_objects(buffer)?;
                 body.extract_objects(buffer)?;
                 query_args.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Foreach {
                 expression, body, ..
             } => {
                 expression.extract_objects(buffer)?;
                 body.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ExitOrContinue { condition, .. } => {
                 condition.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Return { expression, .. } => {
                 expression.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ReturnNext { expression, .. } => {
                 expression.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ReturnQuery {
                 query,
                 dynamic_query,
@@ -945,16 +950,16 @@ impl ObjectNode for PlPgSqlStatement {
                 query.extract_objects(buffer)?;
                 dynamic_query.extract_objects(buffer)?;
                 params.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Raise {
                 params, options, ..
             } => {
                 params.extract_objects(buffer)?;
                 options.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Assert { condition, .. } => {
                 condition.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::ExecSql {
                 sql_statement,
                 target,
@@ -962,7 +967,7 @@ impl ObjectNode for PlPgSqlStatement {
             } => {
                 sql_statement.extract_objects(buffer)?;
                 target.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::DynExecute {
                 query,
                 target,
@@ -972,7 +977,7 @@ impl ObjectNode for PlPgSqlStatement {
                 query.extract_objects(buffer)?;
                 target.extract_objects(buffer)?;
                 params.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::DynForS {
                 body,
                 query,
@@ -982,11 +987,11 @@ impl ObjectNode for PlPgSqlStatement {
                 body.extract_objects(buffer)?;
                 query.extract_objects(buffer)?;
                 params.extract_objects(buffer)?;
-            }
-            PlPgSqlStatement::GetDiagnostics { .. } => {}
+            },
+            PlPgSqlStatement::GetDiagnostics { .. } => {},
             PlPgSqlStatement::Open { query, .. } => {
                 query.extract_objects(buffer)?;
-            }
+            },
             PlPgSqlStatement::Fetch {
                 target,
                 fetch_count_expr,
@@ -994,18 +999,16 @@ impl ObjectNode for PlPgSqlStatement {
             } => {
                 target.extract_objects(buffer)?;
                 fetch_count_expr.extract_objects(buffer)?;
-            }
-            PlPgSqlStatement::Close { .. } => {}
+            },
+            PlPgSqlStatement::Close { .. } => {},
             PlPgSqlStatement::Perform { expression, .. } => {
                 expression.extract_objects(buffer)?;
-            }
-            PlPgSqlStatement::Call {
-                expression, ..
-            } => {
+            },
+            PlPgSqlStatement::Call { expression, .. } => {
                 expression.extract_objects(buffer)?;
-            }
-            PlPgSqlStatement::Commit { .. } => {}
-            PlPgSqlStatement::Rollback { .. } => {}
+            },
+            PlPgSqlStatement::Commit { .. } => {},
+            PlPgSqlStatement::Rollback { .. } => {},
         }
         Ok(())
     }

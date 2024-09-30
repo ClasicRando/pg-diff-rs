@@ -3,8 +3,8 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 use sqlx::error::BoxDynError;
-use sqlx::{PgPool, Postgres, query_scalar};
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
+use sqlx::{query_scalar, PgPool, Postgres};
 
 use constraint::{get_constraints, Constraint};
 pub use database::{Database, DatabaseMigration};
@@ -149,16 +149,16 @@ impl Display for IndexParameters {
                 write!(f, " INCLUDE(")?;
                 write_join!(f, include, ",");
                 write!(f, ")")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         match &self.with {
             Some(storage_parameters) if !storage_parameters.is_empty() => {
                 write!(f, " WITH(")?;
                 write_join!(f, storage_parameters, ",");
                 write!(f, ")")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         if let Some(tablespace) = &self.tablespace {
             write!(f, " USING INDEX TABLESPACE {}", tablespace)?;
@@ -185,6 +185,7 @@ pub enum SqlObjectEnum<'o> {
     View(&'o View),
 }
 
+#[allow(dead_code)]
 impl<'o> SqlObjectEnum<'o> {
     /// Calls the trait method [SqlObject::name] of each variant
     fn name(&self) -> &'o SchemaQualifiedName {
@@ -260,21 +261,21 @@ impl<'o> SqlObjectEnum<'o> {
             (Self::Schema(old), Self::Schema(new)) if old != new => old.alter_statements(new, w),
             (Self::Extension(old), Self::Extension(new)) if old != new => {
                 old.alter_statements(new, w)
-            }
+            },
             (Self::Udt(old), Self::Udt(new)) if old != new => old.alter_statements(new, w),
             (Self::Table(old), Self::Table(new)) if old != new => old.alter_statements(new, w),
             (Self::Policy(old), Self::Policy(new)) if old != new => old.alter_statements(new, w),
             (Self::Constraint(old), Self::Constraint(new)) if old != new => {
                 old.alter_statements(new, w)
-            }
+            },
             (Self::Index(old), Self::Index(new)) if old != new => old.alter_statements(new, w),
             (Self::Trigger(old), Self::Trigger(new)) if old != new => old.alter_statements(new, w),
             (Self::Sequence(old), Self::Sequence(new)) if old != new => {
                 old.alter_statements(new, w)
-            }
+            },
             (Self::Function(old), Self::Function(new)) if old != new => {
                 old.alter_statements(new, w)
-            }
+            },
             (Self::View(old), Self::View(new)) if old != new => old.alter_statements(new, w),
             _ => Ok(()),
         }
@@ -401,11 +402,11 @@ impl SchemaQualifiedName {
             local_name: local_name.to_owned(),
         }
     }
-    
+
     /// Returns true if the qualified name is the `public` or `pg_catalog` schemas
     fn is_implicit_schema(&self) -> bool {
         if !self.local_name.is_empty() {
-            return false
+            return false;
         }
         self.schema_name == PUBLIC_SCHEMA_NAME || self.schema_name == PG_CATALOG_SCHEMA_NAME
     }
@@ -465,14 +466,14 @@ where
     match (old, new) {
         (Some(old_tablespace), Some(new_tablespace)) if old_tablespace != new_tablespace => {
             write!(w, "SET TABLESPACE {new_tablespace}")?;
-        }
+        },
         (Some(_), None) => {
             write!(w, "SET TABLESPACE pg_default")?;
-        }
+        },
         (None, Some(new_tablespace)) => {
             write!(w, "SET TABLESPACE {new_tablespace}")?;
-        }
-        _ => {}
+        },
+        _ => {},
     }
     Ok(())
 }

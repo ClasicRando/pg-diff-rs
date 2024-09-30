@@ -22,7 +22,7 @@ pub async fn get_constraints(
         Err(error) => {
             println!("Could not load constraints");
             return Err(error.into());
-        }
+        },
     };
     Ok(constraints)
 }
@@ -58,7 +58,7 @@ impl PartialEq for Constraint {
             && self.name == other.name
             && self.schema_qualified_name == other.schema_qualified_name
             && self.constraint_type == other.constraint_type
-            && self.timing == other.timing && self.dependencies == other.dependencies
+            && self.timing == other.timing
     }
 }
 
@@ -83,7 +83,7 @@ impl SqlObject for Constraint {
                 ..
             } => write!(
                 w,
-                "ALTER TABLE {} ADD CONSTRAINT {}\n{}{}",
+                "ALTER TABLE {} ADD CONSTRAINT {}\nCHECK({}){} ",
                 self.owner_table_name,
                 self.name,
                 expression.trim(),
@@ -102,8 +102,8 @@ impl SqlObject for Constraint {
                     if *are_nulls_distinct { "" } else { " NOT" },
                 )?;
                 write_join!(w, columns, ",");
-                write!(w, "){index_parameters}")?;
-            }
+                write!(w, "){index_parameters} ")?;
+            },
             ConstraintType::PrimaryKey {
                 columns,
                 index_parameters,
@@ -114,8 +114,8 @@ impl SqlObject for Constraint {
                     self.owner_table_name, self.name,
                 )?;
                 write_join!(w, columns, ",");
-                write!(w, "){index_parameters}")?;
-            }
+                write!(w, "){index_parameters} ")?;
+            },
             ConstraintType::ForeignKey {
                 columns,
                 ref_table,
@@ -134,26 +134,18 @@ impl SqlObject for Constraint {
                 write_join!(w, ref_columns, ",");
                 write!(
                     w,
-                    ") {}\n    ON DELETE {on_delete}\n    ON UPDATE {on_update}",
+                    ") {}\n    ON DELETE {on_delete}\n    ON UPDATE {on_update}\n",
                     match_type.as_ref(),
                 )?;
-            }
+            },
         };
-        writeln!(w, " {};", self.timing)?;
+        writeln!(w, "{};", self.timing)?;
         Ok(())
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
-        if self.constraint_type == new.constraint_type && self.timing == new.timing {
-            return Ok(());
-        }
-
         if self.constraint_type != new.constraint_type {
-            writeln!(
-                w,
-                "ALTER TABLE {} DROP CONSTRAINT {};",
-                self.owner_table_name, self.name
-            )?;
+            self.drop_statements(w)?;
             self.create_statements(w)?;
             return Ok(());
         }
@@ -251,7 +243,7 @@ impl Display for ConstraintTiming {
                 } else {
                     "DEFERRABLE INITIALLY DEFERRED"
                 }
-            }
+            },
         };
         f.write_str(text)
     }
@@ -315,7 +307,7 @@ impl Display for ForeignKeyAction {
                 } else {
                     write!(f, "SET NULL")
                 }
-            }
+            },
             ForeignKeyAction::SetDefault { columns } => {
                 if let Some(columns) = columns {
                     write!(f, "SET DEFAULT (")?;
@@ -324,7 +316,202 @@ impl Display for ForeignKeyAction {
                 } else {
                     write!(f, "SET DEFAULT")
                 }
-            }
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use sqlx::postgres::types::Oid;
+
+    use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject};
+
+    use super::{Constraint, ConstraintTiming, ConstraintType, ForeignKeyAction, ForeignKeyMatch};
+    static SCHEMA: &str = "test_schema";
+    static TABLE: &str = "test_table";
+    static REF_TABLE: &str = "ref_table";
+    static NAME: &str = "test_constraint";
+    static TEST_COL: &str = "test_col";
+    static TEST_COL2: &str = "test_col2";
+
+    fn create_constraint(
+        schema_name: &str,
+        table_name: &str,
+        constraint_name: &str,
+        constraint_type: ConstraintType,
+        timing: ConstraintTiming,
+    ) -> Constraint {
+        Constraint {
+            table_oid: Oid(1),
+            owner_table_name: SchemaQualifiedName::new(schema_name, table_name),
+            name: constraint_name.into(),
+            schema_qualified_name: SchemaQualifiedName::from(format!(
+                "{schema_name}.{table_name}.{constraint_name}"
+            )),
+            constraint_type,
+            timing,
+            dependencies: vec![],
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Check {
+                columns: vec![TEST_COL.into()],
+                expression: "test_col = 'test'".into(),
+                is_inheritable: false
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        include_str!("../../test-files/sql/constraint-case1.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Check {
+                columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                expression: String::from("test_col = 'test' AND test_col = test_col2"),
+                is_inheritable: true
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        include_str!("../../test-files/sql/constraint-case2.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Unique {
+                columns: vec![TEST_COL.into()],
+                are_nulls_distinct: true,
+                index_parameters: IndexParameters {
+                    include: None,
+                    with: None,
+                    tablespace: None
+                },
+            },
+            ConstraintTiming::Deferrable { is_immediate: true }
+        ),
+        include_str!("../../test-files/sql/constraint-case3.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Unique {
+                columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                are_nulls_distinct: false,
+                index_parameters: IndexParameters {
+                    include: None,
+                    with: None,
+                    tablespace: None
+                },
+            },
+            ConstraintTiming::Deferrable { is_immediate: false }
+        ),
+        include_str!("../../test-files/sql/constraint-case4.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::PrimaryKey {
+                columns: vec![TEST_COL.into()],
+                index_parameters: IndexParameters {
+                    include: None,
+                    with: None,
+                    tablespace: None,
+                },
+            },
+            ConstraintTiming::NotDeferrable,
+        ),
+        include_str!("../../test-files/sql/constraint-case5.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::PrimaryKey {
+                columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                index_parameters: IndexParameters {
+                    include: None,
+                    with: None,
+                    tablespace: None,
+                },
+            },
+            ConstraintTiming::NotDeferrable,
+        ),
+        include_str!("../../test-files/sql/constraint-case6.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::ForeignKey {
+                columns: vec![TEST_COL.into()],
+                ref_table: SchemaQualifiedName::new(SCHEMA, REF_TABLE),
+                ref_columns: vec![TEST_COL.into()],
+                match_type: ForeignKeyMatch::Full,
+                on_delete: ForeignKeyAction::Cascade,
+                on_update: ForeignKeyAction::NoAction,
+            },
+            ConstraintTiming::NotDeferrable,
+        ),
+        include_str!("../../test-files/sql/constraint-case7.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::ForeignKey {
+                columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                ref_table: SchemaQualifiedName::new(SCHEMA, REF_TABLE),
+                ref_columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                match_type: ForeignKeyMatch::Simple,
+                on_delete: ForeignKeyAction::Restrict,
+                on_update: ForeignKeyAction::SetDefault { columns: None },
+            },
+            ConstraintTiming::NotDeferrable,
+        ),
+        include_str!("../../test-files/sql/constraint-case8.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::ForeignKey {
+                columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                ref_table: SchemaQualifiedName::new(SCHEMA, REF_TABLE),
+                ref_columns: vec![TEST_COL.into(), TEST_COL2.into()],
+                match_type: ForeignKeyMatch::Partial,
+                on_delete: ForeignKeyAction::SetNull { columns: Some(vec![TEST_COL.into()]) },
+                on_update: ForeignKeyAction::SetDefault { columns: Some(vec![TEST_COL.into()]) },
+            },
+            ConstraintTiming::NotDeferrable,
+        ),
+        include_str!("../../test-files/sql/constraint-case9.pgsql"),
+    )]
+    fn create_statements_should_add_alter_table_add_constraint_statement(
+        #[case] constraint: Constraint,
+        #[case] statement: &str,
+    ) {
+        let mut writable = String::new();
+        constraint.create_statements(&mut writable).unwrap();
+
+        assert_eq!(statement.trim(), writable.trim());
     }
 }

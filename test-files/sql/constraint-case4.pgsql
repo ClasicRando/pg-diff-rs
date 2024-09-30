@@ -1,0 +1,2 @@
+ALTER TABLE test_schema.test_table ADD CONSTRAINT test_constraint
+UNIQUE NULLS NOT DISTINCT (test_col,test_col2) DEFERRABLE INITIALLY DEFERRED;

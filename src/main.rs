@@ -150,10 +150,10 @@ async fn main() -> Result<(), PgDiffError> {
             let pool = PgPool::connect_with(connect_options).await?;
             let database = Database::from_connection(&pool).await?;
             database.script_out(output_path).await?;
-        }
+        },
         Commands::Migrate { .. } => {
             println!("Migration is currently not supported. However, you can take the planned queries from 'plan' command to get migration steps");
-        }
+        },
         Commands::Plan {
             connection,
             files_path,
@@ -170,7 +170,7 @@ async fn main() -> Result<(), PgDiffError> {
                 return Ok(());
             }
             println!("{}", migration_script);
-        }
+        },
     }
     Ok(())
 }

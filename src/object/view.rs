@@ -15,7 +15,7 @@ pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgD
         Err(error) => {
             println!("Could not load views");
             return Err(error.into());
-        }
+        },
     };
     Ok(views)
 }

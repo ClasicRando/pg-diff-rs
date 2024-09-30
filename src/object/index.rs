@@ -18,7 +18,7 @@ pub async fn get_indexes(pool: &PgPool, tables: &[Oid]) -> Result<Vec<Index>, Pg
         Err(error) => {
             println!("Could not load index");
             return Err(error.into());
-        }
+        },
     };
     Ok(indexes)
 }

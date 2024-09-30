@@ -11,7 +11,10 @@ use crate::object::plpgsql::{parse_plpgsql_function, PlPgSqlFunction};
 use crate::object::table::get_table_by_qualified_name;
 use crate::{write_join, PgDiffError};
 
-use super::{check_names_in_database, compare_option_lists, is_verbose, OptionListObject, PG_CATALOG_SCHEMA_NAME, SchemaQualifiedName, SqlObject};
+use super::{
+    check_names_in_database, compare_option_lists, is_verbose, OptionListObject,
+    SchemaQualifiedName, SqlObject, PG_CATALOG_SCHEMA_NAME,
+};
 
 /// Fetch all functions within the `schemas` specified
 pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Function>, PgDiffError> {
@@ -25,7 +28,7 @@ pub async fn get_functions(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Functi
         Err(error) => {
             println!("Could not load functions");
             return Err(error.into());
-        }
+        },
     };
     Ok(functions)
 }
@@ -46,7 +49,7 @@ async fn get_functions_by_qualified_name(
                     println!("Could not load functions by qualified name");
                 }
                 return Err(error.into());
-            }
+            },
         };
     Ok(functions)
 }
@@ -67,7 +70,7 @@ async fn get_objects_by_qualified_name(
                     println!("Could not load objects by qualified name");
                 }
                 return Err(error.into());
-            }
+            },
         };
     Ok(objects)
 }
@@ -232,7 +235,7 @@ impl Function {
                         println!("Object Name: {}. {error}\n", self.name);
                     }
                     return Ok(());
-                }
+                },
             };
             for function in result {
                 let names = match function.get_objects() {
@@ -242,7 +245,7 @@ impl Function {
                             println!("Could not get dependencies of dynamic function {} due to object extraction error. {error}", self.name);
                         }
                         return Ok(());
-                    }
+                    },
                 };
                 for name in names {
                     let objects = get_objects_by_qualified_name(pool, &name).await?;
@@ -275,7 +278,7 @@ impl Function {
                     );
                 }
                 self.dependencies.push(object.clone());
-            }
+            },
             [] => {
                 if is_verbose() {
                     println!(
@@ -283,7 +286,7 @@ impl Function {
                         self.name
                     )
                 }
-            }
+            },
             objects => {
                 if objects
                     .iter()
@@ -298,7 +301,7 @@ impl Function {
                         objects.to_vec()
                     );
                 }
-            }
+            },
         }
     }
 
@@ -486,14 +489,14 @@ impl SqlObject for Function {
                     "ALTER FUNCTION {}({}) ROWS {new_estimated_rows};",
                     self.name, self.arguments
                 )?;
-            }
-            (None, None) => {}
+            },
+            (None, None) => {},
             _ => {
                 return Err(PgDiffError::InvalidMigration {
                     object_name: self.name.to_string(),
                     reason: "Cannot change the return type to/from rows".to_string(),
                 })
-            }
+            },
         }
 
         Ok(())
@@ -581,7 +584,7 @@ impl FunctionSourceCode {
                     writeln!(w, "{}", source.trim())?;
                 }
                 w.write_str("$function$;")?;
-            }
+            },
             Self::C {
                 name,
                 link_symbol: bin_info,
@@ -591,7 +594,7 @@ impl FunctionSourceCode {
                     object_name: SchemaQualifiedName::from(name),
                     language: "internal".to_string(),
                 })
-            }
+            },
             Self::Invalid {
                 function_name,
                 language_name,
@@ -600,7 +603,7 @@ impl FunctionSourceCode {
                     object_name: SchemaQualifiedName::from(function_name),
                     language: language_name.clone(),
                 })
-            }
+            },
         }
         Ok(())
     }

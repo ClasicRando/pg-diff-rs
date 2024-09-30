@@ -8,7 +8,7 @@ use crate::PgDiffError;
 use super::{SchemaQualifiedName, SqlObject};
 
 /// Fetch all schemas found within the current database (including the `public` schema).
-/// 
+///
 /// Excludes `pg_catalog`, `information_schema` and all schemas named like `^pg_toast` and
 /// `^pg_temp`. These schemas always exist but should not be analyzed.  
 pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
@@ -18,7 +18,7 @@ pub async fn get_schemas(pool: &PgPool) -> Result<Vec<Schema>, PgDiffError> {
         Err(error) => {
             println!("Could not load schemas");
             return Err(error.into());
-        }
+        },
     };
     Ok(schema_names)
 }

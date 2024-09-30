@@ -17,3 +17,4 @@ async-walkdir = "2.0.0"
 futures = "0.3.30"
 uuid = { version = "1.10.0", features = ["v4"] }
 serde_repr = "0.1.19"
+rstest = "0.23.0"

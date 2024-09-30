@@ -22,7 +22,7 @@ pub async fn get_tables(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Table>, P
         Err(error) => {
             println!("Could not load tables");
             return Err(error.into());
-        }
+        },
     };
     Ok(tables)
 }
@@ -38,7 +38,7 @@ pub async fn get_table_by_qualified_name(
         Err(error) => {
             println!("Could not load tables by qualified name");
             return Err(error.into());
-        }
+        },
     };
     Ok(tables)
 }
@@ -145,19 +145,19 @@ impl SqlObject for Table {
         match &self.partition_values {
             Some(partition_values) => {
                 write!(w, "\nFOR VALUES {partition_values}")?;
-            }
+            },
             None if self.partitioned_parent_table.is_some() => {
                 w.write_str("\nDEFAULT")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         match &self.inherited_tables {
             Some(inherited_tables) if !inherited_tables.is_empty() => {
                 w.write_str("\nINHERITS (")?;
                 write_join!(w, inherited_tables, ",");
                 w.write_str(")")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         if let Some(partition_key_def) = &self.partition_key_def {
             write!(w, "\nPARTITION BY {partition_key_def}")?;
@@ -181,8 +181,8 @@ impl SqlObject for Table {
                     object_name: self.name.to_string(),
                     reason: "Cannot update partition key definition".to_string(),
                 })
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         match (&self.partition_values, &new.partition_values) {
@@ -191,8 +191,8 @@ impl SqlObject for Table {
                     object_name: self.name.to_string(),
                     reason: "Cannot update partition values".to_string(),
                 })
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         match (
@@ -204,8 +204,8 @@ impl SqlObject for Table {
                     object_name: self.name.to_string(),
                     reason: "Cannot update parent partition table".to_string(),
                 })
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         if let Some(old_inherit) = &self.inherited_tables {
@@ -290,16 +290,16 @@ impl Column {
                     Storage::Main | Storage::Extended => {
                         write!(w, " {}", storage.as_ref())?;
                         write!(w, " {}", self.compression.as_ref())?;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
         match &self.collation {
             Some(collation) if !collation.is_default() => {
                 write!(w, " {collation}")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         write!(w, "{} NULL", if self.is_non_null { " NOT" } else { "" })?;
         if let Some(default_expression) = &self.default_expression {
@@ -347,7 +347,7 @@ impl Column {
     }
 
     /// Write an `ALTER TABLE {} ALTER COLUMN` statement for this column to the writeable object
-    /// 
+    ///
     /// ## Errors
     /// - if the data type of the column has changed between migrations
     /// - if the column becomes a generated column
@@ -389,22 +389,22 @@ impl Column {
                     "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};",
                     table.name, self.name
                 )?;
-            }
+            },
             (Some(_), None) => {
                 writeln!(
                     w,
                     "ALTER TABLE {} ALTER COLUMN {} DROP DEFAULT;",
                     table.name, self.name
                 )?;
-            }
+            },
             (None, Some(new_expression)) => {
                 writeln!(
                     w,
                     "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {new_expression};",
                     table.name, self.name
                 )?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         match (&self.generated_column, &other.generated_column) {
             (Some(old_expression), Some(new_expression)) if old_expression != new_expression => {
@@ -449,22 +449,22 @@ impl Column {
                     new_identity.sequence_options.alter_sequence(w)?;
                     w.write_str(";\n")?;
                 }
-            }
+            },
             (Some(_), None) => {
                 writeln!(
                     w,
                     "ALTER TABLE {} ALTER COLUMN {} DROP IDENTITY;",
                     table.name, self.name
                 )?;
-            }
+            },
             (None, Some(new_identity)) => {
                 writeln!(
                     w,
                     "ALTER TABLE {} ALTER COLUMN {} ADD {new_identity};",
                     table.name, self.name
                 )?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         match (&self.storage, &other.storage) {
             (Some(old_storage), Some(new_storage)) if old_storage != new_storage => {
@@ -475,8 +475,8 @@ impl Column {
                     self.name,
                     new_storage.as_ref()
                 )?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         if self.compression != other.compression {
             writeln!(

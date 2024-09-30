@@ -14,7 +14,7 @@ pub async fn get_extensions(pool: &PgPool) -> Result<Vec<Extension>, PgDiffError
         Err(error) => {
             println!("Could not load extensions");
             return Err(error.into());
-        }
+        },
     };
     Ok(extensions)
 }

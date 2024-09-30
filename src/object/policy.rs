@@ -14,7 +14,7 @@ pub async fn get_policies(pool: &PgPool, schemas: &[Oid]) -> Result<Vec<Policy>,
         Err(error) => {
             println!("Could not load policies");
             return Err(error.into());
-        }
+        },
     };
     Ok(tables)
 }

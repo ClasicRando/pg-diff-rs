@@ -177,7 +177,7 @@ impl<'n> NodeIter<'n> {
                 for function in result.functions() {
                     self.queued_elements.push_back(function.into());
                 }
-            }
+            },
             Err(error) => {
                 if is_verbose() {
                     println!(
@@ -185,7 +185,7 @@ impl<'n> NodeIter<'n> {
                         code
                     )
                 }
-            }
+            },
         }
     }
 
@@ -197,18 +197,18 @@ impl<'n> NodeIter<'n> {
                     println!("Skipping plpg/sql code block since the source text could not be parsed. {error}\n")
                 }
                 return;
-            }
+            },
         };
         for function in functions {
             match function.get_objects() {
                 Ok(objects) => {
                     self.queued_elements.append(&mut VecDeque::from(objects));
-                }
+                },
                 Err(error) => {
                     if is_verbose() {
-                        println!("Skipping plpg/sq; code block since the source text could not be parsed for objects. {error}")
+                        println!("Skipping plpg/sql code block since the source text could not be parsed for objects. {error}")
                     }
-                }
+                },
             }
         }
     }
@@ -218,64 +218,64 @@ impl<'n> NodeIter<'n> {
             Node::TableFunc(table_func) => {
                 self.queue_nodes(&table_func.coltypes);
                 self.queue_node(&table_func.rowexpr)
-            }
+            },
             Node::CaseExpr(expr) => {
                 self.queue_nodes(&expr.args);
                 self.queue_node(&expr.defresult);
-            }
+            },
             Node::CaseWhen(when) => {
                 self.queue_node(&when.expr);
                 self.queue_node(&when.result);
-            }
+            },
             Node::TypeName(type_name) => {
                 self.queue_nodes(&type_name.names);
-            }
+            },
             Node::AExpr(expr) => {
                 self.queue_node(&expr.lexpr);
                 self.queue_node(&expr.lexpr);
-            }
+            },
             Node::FuncCall(func_call) => {
                 self.queue_nodes(&func_call.args);
                 self.queue_names(&func_call.funcname);
-            }
+            },
             Node::ColumnDef(column) => {
                 if let Some(name) = &column.type_name {
                     self.queue_names(&name.names);
                 }
-            }
+            },
             Node::AlterTableStmt(alter_table) => {
                 self.queue_relation(&alter_table.relation);
                 self.queue_nodes(&alter_table.cmds);
-            }
+            },
             Node::AlterTableCmd(alter_command) => {
                 self.queue_node(&alter_command.def);
-            }
+            },
             Node::CreateStmt(create_table) => {
                 self.queue_nodes(&create_table.constraints);
                 self.queue_nodes(&create_table.table_elts);
-            }
+            },
             Node::Constraint(constraint) => match constraint.contype() {
                 ConstrType::ConstrCheck => self.queue_node(&constraint.raw_expr),
                 ConstrType::ConstrForeign => self.queue_relation(&constraint.pktable),
-                _ => {}
+                _ => {},
             },
             Node::CreatePolicyStmt(create_policy) => {
                 self.queue_relation(&create_policy.table);
                 self.queue_node(&create_policy.qual);
                 self.queue_node(&create_policy.with_check);
-            }
+            },
             Node::AlterPolicyStmt(alter_policy) => {
                 self.queue_relation(&alter_policy.table);
                 self.queue_node(&alter_policy.qual);
                 self.queue_node(&alter_policy.with_check);
-            }
+            },
             Node::CreateTrigStmt(create_trigger) => {
                 self.queue_relation(&create_trigger.relation);
                 self.queue_names(&create_trigger.funcname);
-            }
+            },
             Node::IndexStmt(index_statement) => {
                 self.queue_relation(&index_statement.relation);
-            }
+            },
             Node::CreateFunctionStmt(create_function) => {
                 self.queue_node(&create_function.sql_body);
                 if let Some(type_name) = &create_function.return_type {
@@ -313,7 +313,7 @@ impl<'n> NodeIter<'n> {
                                 if is_verbose() {
                                     println!("Could not deparse plpg/sql function. {error}");
                                 }
-                            }
+                            },
                         },
                         "sql" => {
                             if let Some(inline_code) = def_elements
@@ -340,7 +340,7 @@ impl<'n> NodeIter<'n> {
                             {
                                 self.parse_inline_sql_code(&inline_code.sval)
                             }
-                        }
+                        },
                         _ => {
                             if is_verbose() {
                                 println!(
@@ -348,18 +348,18 @@ impl<'n> NodeIter<'n> {
                                     language.sval
                                 )
                             }
-                        }
+                        },
                     }
                 };
-            }
+            },
             Node::FunctionParameter(function_parameter) => {
                 if let Some(type_name) = &function_parameter.arg_type {
                     self.queue_names(&type_name.names);
                 }
-            }
+            },
             Node::AlterFunctionStmt(alter_function) => {
                 self.queue_nodes(&alter_function.actions);
-            }
+            },
             Node::InlineCodeBlock(inline_code_block) => match inline_code_block.lang_oid {
                 14 => self.parse_inline_sql_code(&inline_code_block.source_text),
                 13545 => self.parse_inline_plpgsql_code(&inline_code_block.source_text),
@@ -370,20 +370,20 @@ impl<'n> NodeIter<'n> {
                             inline_code_block.lang_oid
                         )
                     }
-                }
+                },
             },
             Node::AlterTypeStmt(alter_type) => {
                 self.queue_nodes(&alter_type.options);
-            }
+            },
             Node::CompositeTypeStmt(composite_type) => {
                 self.queue_nodes(&composite_type.coldeflist);
-            }
+            },
             Node::CreateDomainStmt(create_domain) => {
                 if let Some(name) = &create_domain.type_name {
                     self.queue_names(&name.names);
                 }
                 self.queue_nodes(&create_domain.constraints);
-            }
+            },
             Node::ViewStmt(view) => {
                 if let Some(query) = view.query.as_ref().and_then(|q| q.node.as_ref()) {
                     match query.deparse() {
@@ -392,10 +392,10 @@ impl<'n> NodeIter<'n> {
                             if is_verbose() {
                                 println!("Error trying to deparse view query. {error}")
                             }
-                        }
+                        },
                     }
                 }
-            }
+            },
             _ => return false,
         };
         self.move_to_next_node();
@@ -655,10 +655,10 @@ impl SourceControlDatabase {
                         &relation.schemaname,
                         &format!("{}.({})", relation.relname, constraint_names),
                     )
-                }
+                },
                 Node::CreateSchemaStmt(create_schema) => {
                     SchemaQualifiedName::new(&create_schema.schemaname, "")
-                }
+                },
                 Node::CompositeTypeStmt(composite_type) => {
                     let composite = extract_option(
                         &path,
@@ -667,10 +667,10 @@ impl SourceControlDatabase {
                             .into(),
                     )?;
                     SchemaQualifiedName::new(&composite.schemaname, &composite.relname)
-                }
+                },
                 Node::CreateExtensionStmt(create_extension) => {
                     SchemaQualifiedName::new("", &create_extension.extname)
-                }
+                },
                 Node::CreatePolicyStmt(create_policy) => {
                     let relation = extract_option(
                         &path,
@@ -682,7 +682,7 @@ impl SourceControlDatabase {
                         &relation.schemaname,
                         &format!("{}.{}", relation.relname, create_policy.policy_name),
                     )
-                }
+                },
                 Node::CreateTrigStmt(create_trigger) => {
                     let relation = extract_option(
                         &path,
@@ -694,7 +694,7 @@ impl SourceControlDatabase {
                         &relation.schemaname,
                         &format!("{}.{}", relation.relname, create_trigger.trigname),
                     )
-                }
+                },
                 Node::CreateSeqStmt(create_sequence) => {
                     let sequence = extract_option(
                         &path,
@@ -703,24 +703,24 @@ impl SourceControlDatabase {
                             .into(),
                     )?;
                     SchemaQualifiedName::new(&sequence.schemaname, &sequence.relname)
-                }
+                },
                 Node::CreateFunctionStmt(create_function) => {
                     extract_names(&create_function.funcname).ok_or(PgDiffError::FileQueryParse {
                         path: path.as_ref().into(),
                         message: "Could not extract function name".into(),
                     })?
-                }
+                },
                 Node::CreateEnumStmt(create_enum) => {
                     extract_names(&create_enum.type_name).ok_or(PgDiffError::FileQueryParse {
                         path: path.as_ref().into(),
                         message: "Could not extract enum type name".into(),
                     })?
-                }
+                },
                 Node::CreateDomainStmt(create_domain) => extract_names(&create_domain.domainname)
                     .ok_or(PgDiffError::FileQueryParse {
-                        path: path.as_ref().into(),
-                        message: "Could not extract domain type name".into(),
-                    })?,
+                    path: path.as_ref().into(),
+                    message: "Could not extract domain type name".into(),
+                })?,
                 Node::CreateRangeStmt(create_range) => extract_names(&create_range.type_name)
                     .ok_or(PgDiffError::FileQueryParse {
                         path: path.as_ref().into(),
@@ -733,7 +733,7 @@ impl SourceControlDatabase {
                         "Could not extract a table name from from an CREATE TABLE statement".into(),
                     )?;
                     SchemaQualifiedName::new(&relation.schemaname, &relation.relname)
-                }
+                },
                 Node::ViewStmt(create_view) => {
                     let relation = extract_option(
                         &path,
@@ -741,7 +741,7 @@ impl SourceControlDatabase {
                         "Could not extract a view name from from an CREATE VIEW statement".into(),
                     )?;
                     SchemaQualifiedName::new(&relation.schemaname, &relation.relname)
-                }
+                },
                 Node::IndexStmt(create_index) => {
                     let relation = extract_option(
                         &path,
@@ -749,7 +749,7 @@ impl SourceControlDatabase {
                         "Could not extract a view name from from an CREATE VIEW statement".into(),
                     )?;
                     SchemaQualifiedName::new(&relation.schemaname, &create_index.idxname)
-                }
+                },
                 _ => {
                     return Err(PgDiffError::FileQueryParse {
                         path: path.as_ref().into(),
@@ -758,7 +758,7 @@ impl SourceControlDatabase {
                             root_node
                         ),
                     });
-                }
+                },
             };
             let statement = DdlStatement {
                 statement: query.to_string(),
@@ -866,7 +866,7 @@ fn extract_names(name_nodes: &[pg_query::protobuf::Node]) -> Option<SchemaQualif
             }
             let local_name = extract_string(local_name)?;
             Some(SchemaQualifiedName::new(schema_name, local_name))
-        }
+        },
         [local_name] => {
             let local_name = extract_string(local_name)?;
             if BUILT_IN_NAMES.contains(&local_name.as_str())
@@ -875,7 +875,7 @@ fn extract_names(name_nodes: &[pg_query::protobuf::Node]) -> Option<SchemaQualif
                 return None;
             }
             Some(SchemaQualifiedName::from(local_name))
-        }
+        },
         _ => None,
     }
 }
@@ -932,7 +932,7 @@ impl Display for LocalProvider {
                     "\n    LOCALE_PROVIDER 'libc'\n    LC_COLLATE '{}'\n    LC_CTYPE '{}'",
                     lc_collate, lc_ctype
                 )
-            }
+            },
             LocalProvider::Icu {
                 icu_locale,
                 icu_rules,
@@ -946,7 +946,7 @@ impl Display for LocalProvider {
                     write!(f, "\n    ICU_RULES '{}'", icu_rules)?;
                 }
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -1160,7 +1160,7 @@ impl Database {
                 DbCompareResult::Create(new) => new.create_statements(&mut result)?,
                 DbCompareResult::Alter { old, new } => {
                     old.alter_statements(&new, &mut result)?;
-                }
+                },
                 DbCompareResult::Drop(old) => old.drop_statements(&mut result)?,
             }
         }
@@ -1344,7 +1344,6 @@ enum DbCompareResult<'d> {
 }
 
 struct DbCompare<'d> {
-    old: &'d Database,
     new: &'d Database,
     old_iter: DbIter<'d>,
     new_iter: DbIter<'d>,
@@ -1354,7 +1353,6 @@ struct DbCompare<'d> {
 impl<'d> DbCompare<'d> {
     fn new(old: &'d Database, new: &'d Database) -> Self {
         Self {
-            old,
             new,
             old_iter: DbIter::new(old),
             new_iter: DbIter::new(new),

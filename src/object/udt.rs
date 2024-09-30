@@ -16,7 +16,7 @@ pub async fn get_udts(pool: &PgPool, schemas: &[&str]) -> Result<Vec<Udt>, PgDif
         Err(error) => {
             println!("Could not load udts");
             return Err(error.into());
-        }
+        },
     };
     Ok(udts)
 }
@@ -59,19 +59,19 @@ impl SqlObject for Udt {
                 write!(w, "CREATE TYPE {} AS ENUM (\n    '", self.name)?;
                 write_join!(w, labels, "',\n    '");
                 w.write_str("'\n);\n")?;
-            }
+            },
             UdtType::Composite { attributes } => {
                 write!(w, "CREATE TYPE {} AS (\n    ", self.name)?;
                 write_join!(w, attributes, ",\n    ");
                 w.write_str("\n);\n")?;
-            }
+            },
             UdtType::Range { subtype } => {
                 writeln!(
                     w,
                     "CREATE TYPE {} AS RANGE (SUBTYPE = {});",
                     self.name, subtype
                 )?;
-            }
+            },
             UdtType::Domain {
                 data_type,
                 collation,
@@ -90,17 +90,17 @@ impl SqlObject for Udt {
                 match checks {
                     Some(checks) if !checks.is_empty() => {
                         write_join!(w, "\n    ", checks, "\n    ", "");
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
                 w.write_char(';')?;
-            }
+            },
             _ => {
                 return Err(PgDiffError::UnsupportedUdtType {
                     object_name: self.name.clone(),
                     type_name: self.udt_type.as_ref().to_string(),
                 });
-            }
+            },
         }
         Ok(())
     }
@@ -144,7 +144,7 @@ impl SqlObject for Udt {
                     writeln!(w, "ALTER TYPE {} ADD VALUE '{new_label}';", self.name)?;
                 }
                 w.write_char('\n')?;
-            }
+            },
             (
                 UdtType::Composite {
                     attributes: existing_attributes,
@@ -180,7 +180,7 @@ impl SqlObject for Udt {
                     }
                     w.write_str(";\n")?;
                 }
-            }
+            },
             (
                 UdtType::Range {
                     subtype: existing_subtype,
@@ -199,7 +199,7 @@ impl SqlObject for Udt {
                         ),
                     });
                 }
-            }
+            },
             (
                 UdtType::Domain {
                     data_type: old_data_type,
@@ -293,14 +293,14 @@ impl SqlObject for Udt {
                         )?;
                     }
                 }
-            }
+            },
             (_, _) => {
                 return Err(PgDiffError::IncompatibleTypes {
                     name: self.name.clone(),
                     original_type: self.udt_type.as_ref().into(),
                     new_type: new.udt_type.as_ref().into(),
                 })
-            }
+            },
         }
         Ok(())
     }
@@ -372,8 +372,8 @@ impl Display for CompositeField {
         match &self.collation {
             Some(collation) if !collation.is_default() => {
                 write!(f, " {collation}")?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }

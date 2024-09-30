@@ -1,6 +1,6 @@
 use super::{
     parse_plpgsql_function, CursorOption, FetchDirection, PlPgSqlDiagnosticsItem,
-    PlPgSqlDiagnoticsKind, PlPgSqlElsIf, PlPgSqlExpr, PlPgSqlFunction, PlPgSqlOpenCursor,
+    PlPgSqlDiagnosticsKind, PlPgSqlElsIf, PlPgSqlExpr, PlPgSqlFunction, PlPgSqlOpenCursor,
     PlPgSqlRaiseLogLevel, PlPgSqlRaiseOption, PlPgSqlRaiseOptionType, PlPgSqlStatement,
     PlPgSqlVariable, RawParseMode, RowField,
 };
@@ -10,7 +10,7 @@ static CLEAN_QUERY: Lazy<Regex> = lazy_regex!("\\s+");
 
 #[test]
 fn parse_plpgsql_function_should_parse_assign_statement() {
-    let function_block = include_str!("./../../../test-files/plpgsql-assign-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/assign-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -44,7 +44,7 @@ fn parse_plpgsql_function_should_parse_assign_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_if_statement() {
-    let function_block = include_str!("./../../../test-files/plpgsql-if-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/if-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -95,7 +95,7 @@ fn parse_plpgsql_function_should_parse_if_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_loop_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-loop-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/loop-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -167,7 +167,7 @@ fn validate_loop(label: Option<&String>, body: &[PlPgSqlStatement]) {
 
 #[test]
 fn parse_plpgsql_function_should_parse_while_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-while-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/while-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -208,7 +208,7 @@ fn parse_plpgsql_function_should_parse_while_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_fori_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-fori-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/fori-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -273,7 +273,7 @@ fn parse_plpgsql_function_should_parse_fori_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_fors_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-fors-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/fors-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -312,7 +312,7 @@ fn parse_plpgsql_function_should_parse_fors_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_dyn_fors_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-dyn-fors-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/dyn-fors-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -355,7 +355,7 @@ fn parse_plpgsql_function_should_parse_dyn_fors_statement() {
 // #[test]
 #[allow(unused)]
 fn parse_plpgsql_function_should_parse_forc_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-forc-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/forc-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -403,7 +403,7 @@ fn parse_plpgsql_function_should_parse_forc_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_foreach_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-foreach-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/foreach-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -455,7 +455,7 @@ fn parse_plpgsql_function_should_parse_foreach_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_return_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-return-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/return-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -491,7 +491,7 @@ fn parse_plpgsql_function_should_parse_return_statement() {
 #[test]
 fn parse_plpgsql_function_should_parse_return_next_query_statement() {
     let function_block =
-        include_str!("./../../../test-files/pl-pgsql-return-next-query-statement.pgsql");
+        include_str!("./../../../test-files/plpgsql/return-next-query-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -549,7 +549,7 @@ fn parse_plpgsql_function_should_parse_return_next_query_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_raise_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-raise-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/raise-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -687,7 +687,7 @@ fn verify_raise_statement(
 
 #[test]
 fn parse_plpgsql_function_should_parse_assert_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-assert-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/assert-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -733,7 +733,7 @@ fn parse_plpgsql_function_should_parse_assert_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_sql_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-sql-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/sql-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -803,7 +803,7 @@ fn parse_plpgsql_function_should_parse_sql_statement() {
 
 #[test]
 fn parse_plpgsql_function_should_parse_dyn_sql_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-dyn-sql-statement.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/dyn-sql-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -881,7 +881,7 @@ fn parse_plpgsql_function_should_parse_dyn_sql_statement() {
 #[test]
 fn parse_plpgsql_function_should_parse_get_diagnostics_statement() {
     let function_block =
-        include_str!("./../../../test-files/pl-pgsql-get-diagnostics-statement.pgsql");
+        include_str!("./../../../test-files/plpgsql/get-diagnostics-statement.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -916,43 +916,43 @@ fn parse_plpgsql_function_should_parse_get_diagnostics_statement() {
         &diagnostics_items[..],
         [
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ReturnedSqlState,
+                kind: PlPgSqlDiagnosticsKind::ReturnedSqlState,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ColumnName,
+                kind: PlPgSqlDiagnosticsKind::ColumnName,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ConstraintName,
+                kind: PlPgSqlDiagnosticsKind::ConstraintName,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::DataTypeName,
+                kind: PlPgSqlDiagnosticsKind::DataTypeName,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::MessageText,
+                kind: PlPgSqlDiagnosticsKind::MessageText,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::TableName,
+                kind: PlPgSqlDiagnosticsKind::TableName,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::SchemaName,
+                kind: PlPgSqlDiagnosticsKind::SchemaName,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ErrorDetails,
+                kind: PlPgSqlDiagnosticsKind::ErrorDetails,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ErrorHint,
+                kind: PlPgSqlDiagnosticsKind::ErrorHint,
                 ..
             },
             PlPgSqlDiagnosticsItem::Inner {
-                kind: PlPgSqlDiagnoticsKind::ErrorContext,
+                kind: PlPgSqlDiagnosticsKind::ErrorContext,
                 ..
             }
         ]
@@ -963,7 +963,7 @@ fn parse_plpgsql_function_should_parse_get_diagnostics_statement() {
 // #[test]
 #[allow(unused)]
 fn parse_plpgsql_function_should_parse_cursor_statement() {
-    let function_block = include_str!("./../../../test-files/pl-pgsql-cursor-statements.pgsql");
+    let function_block = include_str!("./../../../test-files/plpgsql/cursor-statements.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -1109,7 +1109,7 @@ fn parse_plpgsql_function_should_parse_cursor_statement() {
 #[test]
 fn parse_plpgsql_function_should_parse_perform_call_statements() {
     let function_block =
-        include_str!("./../../../test-files/pl-pgsql-perform-call-statements.pgsql");
+        include_str!("./../../../test-files/plpgsql/perform-call-statements.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,
@@ -1155,7 +1155,7 @@ fn parse_plpgsql_function_should_parse_perform_call_statements() {
 #[test]
 fn parse_plpgsql_function_should_parse_commit_rollback_statements() {
     let function_block =
-        include_str!("./../../../test-files/pl-pgsql-commit-rollback-statements.pgsql");
+        include_str!("./../../../test-files/plpgsql/commit-rollback-statements.pgsql");
     let function = parse_plpgsql_function(function_block).unwrap();
     let PlPgSqlFunction::Inner {
         new_variable_no,

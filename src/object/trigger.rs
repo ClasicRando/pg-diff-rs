@@ -11,12 +11,16 @@ use super::{SchemaQualifiedName, SqlObject};
 /// Fetch all triggers associated with the objects referenced (by OID)
 pub async fn get_triggers(pool: &PgPool, object_oids: &[Oid]) -> Result<Vec<Trigger>, PgDiffError> {
     let triggers_query = include_str!("./../../queries/triggers.pgsql");
-    let triggers = match query_as(triggers_query).bind(object_oids).fetch_all(pool).await {
+    let triggers = match query_as(triggers_query)
+        .bind(object_oids)
+        .fetch_all(pool)
+        .await
+    {
         Ok(inner) => inner,
         Err(error) => {
             println!("Could not load triggers");
             return Err(error.into());
-        }
+        },
     };
     Ok(triggers)
 }
@@ -78,13 +82,13 @@ impl PartialEq for Trigger {
 
 impl Trigger {
     /// Extract the text of the arguments and write the string to the writeable object.
-    /// 
+    ///
     /// The arguments are in a null byte separated UTF8 string so the text is extracted by splitting
     /// the byte array by 0 and each chunk is passed to [String::from_utf8_lossy] since there should
     /// be no actual loss due to the unicode errors.
     fn write_function_arguments<W>(&self, w: &mut W) -> Result<(), std::fmt::Error>
     where
-        W: Write
+        W: Write,
     {
         match &self.function_args {
             Some(args) if !args.is_empty() => {
@@ -101,8 +105,8 @@ impl Trigger {
                     "','"
                 );
                 w.write_char('\'')?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -214,7 +218,7 @@ impl Display for TriggerEvent {
                     write_join!(f, columns, ",");
                 }
                 Ok(())
-            }
+            },
             TriggerEvent::Delete => write!(f, "DELETE"),
             TriggerEvent::Truncate => write!(f, "TRUNCATE"),
         }
