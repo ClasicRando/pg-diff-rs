@@ -582,6 +582,7 @@ pub enum Compression {
     #[strum(serialize = "")]
     Default,
     /// Postgres' custom LZ compression method
+    #[allow(clippy::upper_case_acronyms)]
     #[serde(alias = "p")]
     #[strum(serialize = "COMPRESSION pglz")]
     PGLZ,

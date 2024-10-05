@@ -368,7 +368,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable
         ),
-        include_str!("../../test-files/sql/constraint-case1.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case1.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -382,7 +382,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable
         ),
-        include_str!("../../test-files/sql/constraint-case2.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case2.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -400,7 +400,7 @@ mod test {
             },
             ConstraintTiming::Deferrable { is_immediate: true }
         ),
-        include_str!("../../test-files/sql/constraint-case3.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case3.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -418,7 +418,7 @@ mod test {
             },
             ConstraintTiming::Deferrable { is_immediate: false }
         ),
-        include_str!("../../test-files/sql/constraint-case4.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case4.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -435,7 +435,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable,
         ),
-        include_str!("../../test-files/sql/constraint-case5.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case5.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -452,7 +452,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable,
         ),
-        include_str!("../../test-files/sql/constraint-case6.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case6.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -469,7 +469,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable,
         ),
-        include_str!("../../test-files/sql/constraint-case7.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case7.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -486,7 +486,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable,
         ),
-        include_str!("../../test-files/sql/constraint-case8.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case8.pgsql"),
     )]
     #[case(
         create_constraint(
@@ -503,7 +503,7 @@ mod test {
             },
             ConstraintTiming::NotDeferrable,
         ),
-        include_str!("../../test-files/sql/constraint-case9.pgsql"),
+        include_str!("../../test-files/sql/constraint-create-case9.pgsql"),
     )]
     fn create_statements_should_add_alter_table_add_constraint_statement(
         #[case] constraint: Constraint,
