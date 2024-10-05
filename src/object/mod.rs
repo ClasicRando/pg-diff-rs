@@ -121,7 +121,7 @@ fn is_verbose() -> bool {
 
 /// Storage parameters for data objects persisted within a database (i.e. tables and indexes).
 /// Although this is a string, the underlining value is a key value pair separated by an `=`.
-#[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
+#[derive(Debug, Deserialize, PartialEq, sqlx::Type, Clone)]
 #[sqlx(transparent)]
 pub struct StorageParameter(pub(crate) String);
 
@@ -132,7 +132,7 @@ impl Display for StorageParameter {
 }
 
 /// Options that can be specified by a table index
-#[derive(Debug, PartialEq, Deserialize, sqlx::FromRow)]
+#[derive(Debug, PartialEq, Deserialize, sqlx::FromRow, Clone)]
 pub struct IndexParameters {
     /// Optional list of columns included in an index
     pub(crate) include: Option<Vec<String>>,
@@ -443,7 +443,7 @@ impl Collation {
 }
 
 /// Wrapper type for a tablespace name
-#[derive(Debug, Deserialize, PartialEq, sqlx::Type)]
+#[derive(Debug, Deserialize, PartialEq, sqlx::Type, Clone)]
 #[sqlx(transparent)]
 pub struct TableSpace(pub(crate) String);
 

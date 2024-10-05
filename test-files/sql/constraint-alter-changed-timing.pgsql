@@ -1,0 +1,1 @@
+ALTER TABLE test_schema.test_table ALTER CONSTRAINT test_constraint DEFERRABLE INITIALLY IMMEDIATE;

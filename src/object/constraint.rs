@@ -146,7 +146,7 @@ impl SqlObject for Constraint {
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
         if self.constraint_type != new.constraint_type {
             self.drop_statements(w)?;
-            self.create_statements(w)?;
+            new.create_statements(w)?;
             return Ok(());
         }
 
@@ -172,7 +172,7 @@ impl SqlObject for Constraint {
 }
 
 /// Constraint variants and their respective details
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum ConstraintType {
     /// `CHECK` table/column constraint. If the number of columns is 1, then it's a column
@@ -250,7 +250,7 @@ impl Display for ConstraintTiming {
 }
 
 /// Foreign key match options
-#[derive(Debug, Default, Deserialize, PartialEq, strum::AsRefStr)]
+#[derive(Debug, Default, Deserialize, PartialEq, strum::AsRefStr, Clone)]
 pub enum ForeignKeyMatch {
     /// If the foreign key is multi-column, all fields must be null to ignore matching. If the
     /// foreign key is single-column, then this option does not differ from
@@ -268,7 +268,7 @@ pub enum ForeignKeyMatch {
 }
 
 /// Foreign key action when referenced record changes
-#[derive(Debug, Default, Deserialize, PartialEq)]
+#[derive(Debug, Default, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum ForeignKeyAction {
     /// Produces an error if the referenced record changes. The foreign key can then be deferred
@@ -511,6 +511,110 @@ mod test {
     ) {
         let mut writable = String::new();
         constraint.create_statements(&mut writable).unwrap();
+
+        assert_eq!(statement.trim(), writable.trim());
+    }
+
+    #[test]
+    fn alter_statements_should_add_alter_table_alter_constraint_when_changed_timing() {
+        let constraint_type = ConstraintType::Unique {
+            columns: vec![],
+            are_nulls_distinct: true,
+            index_parameters: IndexParameters {
+                include: None,
+                with: None,
+                tablespace: None,
+            },
+        };
+        let constraint_before = create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            constraint_type.clone(),
+            ConstraintTiming::NotDeferrable,
+        );
+        let constraint_after = create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            constraint_type,
+            ConstraintTiming::Deferrable { is_immediate: true },
+        );
+        let statement = include_str!("../../test-files/sql/constraint-alter-changed-timing.pgsql");
+        let mut writable = String::new();
+
+        constraint_before
+            .alter_statements(&constraint_after, &mut writable)
+            .unwrap();
+
+        assert_eq!(statement.trim(), writable.trim());
+    }
+
+    #[rstest::rstest]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Check {
+                columns: vec![TEST_COL.into()],
+                expression: "test_col = 'test'".into(),
+                is_inheritable: false
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Check {
+                columns: vec![TEST_COL2.into()],
+                expression: "test_col2 = 'test'".into(),
+                is_inheritable: false
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        include_str!("../../test-files/sql/constraint-alter-changed-type-case1.pgsql"),
+    )]
+    #[case(
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Check {
+                columns: vec![TEST_COL.into()],
+                expression: "test_col = 'test'".into(),
+                is_inheritable: false
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        create_constraint(
+            SCHEMA,
+            TABLE,
+            NAME,
+            ConstraintType::Unique {
+                columns: vec![TEST_COL.into()],
+                are_nulls_distinct: false,
+                index_parameters: IndexParameters {
+                    include: None,
+                    with: None,
+                    tablespace: None
+                }
+            },
+            ConstraintTiming::NotDeferrable
+        ),
+        include_str!("../../test-files/sql/constraint-alter-changed-type-case2.pgsql"),
+    )]
+    fn alter_statements_should_add_drop_and_create_constraint_statements(
+        #[case] old_constraint: Constraint,
+        #[case] new_constraint: Constraint,
+        #[case] statement: &str,
+    ) {
+        let mut writable = String::new();
+
+        old_constraint
+            .alter_statements(&new_constraint, &mut writable)
+            .unwrap();
 
         assert_eq!(statement.trim(), writable.trim());
     }
