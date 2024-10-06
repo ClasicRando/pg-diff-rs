@@ -1,0 +1,1 @@
+ALTER EXTENSION test_extension SET SCHEMA other_test_schema;

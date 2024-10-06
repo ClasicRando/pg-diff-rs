@@ -1,0 +1,1 @@
+CREATE EXTENSION test_extension VERSION '1.0';

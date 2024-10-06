@@ -1,0 +1,1 @@
+ALTER EXTENSION test_extension UPDATE TO '2.0';
