@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Write};
+use std::ops::Deref;
 use std::sync::OnceLock;
 
 use serde::Deserialize;
 use sqlx::error::BoxDynError;
+use sqlx::postgres::types::Oid;
 use sqlx::postgres::{PgTypeInfo, PgValueRef};
 use sqlx::{query_scalar, PgPool, Postgres};
 
@@ -48,6 +51,27 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "format",
 ];
 
+fn write_join_map<W, T, I, F>(
+    write: &mut W,
+    mut iter: I,
+    writer: F,
+    separator: &str,
+) -> Result<(), std::fmt::Error>
+where
+    W: Write,
+    I: Iterator<Item = T>,
+    F: Fn(&mut W, T) -> Result<(), std::fmt::Error>,
+{
+    if let Some(item) = iter.next() {
+        writer(write, item)?;
+        for item in iter {
+            write.write_str(separator)?;
+            writer(write, item)?;
+        }
+    }
+    Ok(())
+}
+
 /// Join the items of an iterator by writing there contents to an object of type [W] separated by
 /// the [separator] characters specified.
 fn write_join_iter<W, D, I>(
@@ -81,6 +105,12 @@ macro_rules! write_join {
     ($write:ident, $items:expr, $separator:literal) => {
         $crate::object::write_join_iter($write, $items, $separator)?;
     };
+    ($write:ident, $items:ident, $mapper:expr, $separator:literal) => {
+        $crate::object::write_join_map($write, $items.iter(), $mapper, $separator)?;
+    };
+    ($write:ident, $items:expr, $mapper:expr, $separator:literal) => {
+        $crate::object::write_join_map($write, $items, $mapper, $separator)?;
+    };
     ($write:ident, $prefix:literal, $items:ident, $separator:literal, $postfix:literal) => {
         if !$prefix.is_empty() {
             $write.write_str($prefix)?;
@@ -95,6 +125,24 @@ macro_rules! write_join {
             $write.write_str($prefix)?;
         };
         write_join!($write, $items, $separator);
+        if !$postfix.is_empty() {
+            $write.write_str($postfix)?;
+        };
+    };
+    ($write:ident, $prefix:literal, $items:ident, $mapper:expr, $separator:literal, $postfix:literal) => {
+        if !$prefix.is_empty() {
+            $write.write_str($prefix)?;
+        };
+        write_join!($write, $items, $mapper, $separator);
+        if !$postfix.is_empty() {
+            $write.write_str($postfix)?;
+        };
+    };
+    ($write:ident, $prefix:literal, $items:expr, $mapper:expr, $separator:literal, $postfix:literal) => {
+        if !$prefix.is_empty() {
+            $write.write_str($prefix)?;
+        };
+        write_join!($write, $items, $mapper, $separator);
         if !$postfix.is_empty() {
             $write.write_str($postfix)?;
         };
@@ -121,13 +169,112 @@ fn is_verbose() -> bool {
 
 /// Storage parameters for data objects persisted within a database (i.e. tables and indexes).
 /// Although this is a string, the underlining value is a key value pair separated by an `=`.
-#[derive(Debug, Deserialize, PartialEq, sqlx::Type, Clone)]
-#[sqlx(transparent)]
-pub struct StorageParameter(pub(crate) String);
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+pub struct KeyValuePairs(HashMap<String, String>);
 
-impl Display for StorageParameter {
+impl<S> From<&[S]> for KeyValuePairs
+where
+    S: AsRef<str>,
+{
+    fn from(value: &[S]) -> Self {
+        Self(
+            value
+                .iter()
+                .map(|kvp| {
+                    let (key, value) = kvp.as_ref().split_once('=').unwrap();
+                    (key.to_string(), value.to_string())
+                })
+                .collect(),
+        )
+    }
+}
+
+impl<'r> sqlx::Decode<'r, Postgres> for KeyValuePairs {
+    fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
+        let str = <Vec<String> as sqlx::Decode<Postgres>>::decode(value)?;
+        let with: HashMap<String, String> = str
+            .iter()
+            .map(|p| {
+                let Some((first, second)) = p.split_once('=') else {
+                    return (p.to_string(), String::new());
+                };
+                (first.to_string(), second.to_string())
+            })
+            .collect();
+        Ok(KeyValuePairs(with))
+    }
+}
+
+impl sqlx::Type<Postgres> for KeyValuePairs {
+    fn type_info() -> PgTypeInfo {
+        // text
+        PgTypeInfo::with_oid(Oid(25))
+    }
+}
+
+impl Deref for KeyValuePairs {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Macro to implement [sqlx::Type] and [sqlx::Decode] for the specified type
+#[macro_export]
+macro_rules! impl_type_for_kvp_wrapper {
+    ($e:ident) => {
+        impl sqlx::Type<sqlx::Postgres> for $e {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                KeyValuePairs::type_info()
+            }
+        }
+
+        impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $e {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'r>,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                let kvp = <KeyValuePairs as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+                Ok($e(kvp))
+            }
+        }
+
+        impl<S> From<&[S]> for $e
+        where
+            S: AsRef<str>,
+        {
+            fn from(value: &[S]) -> Self {
+                Self(KeyValuePairs::from(value))
+            }
+        }
+
+        impl std::ops::Deref for $e {
+            type Target = KeyValuePairs;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+}
+
+/// Storage parameters for data objects persisted within a database (i.e. tables and indexes).
+/// Although this is a string, the underlining value is a key value pair separated by an `=`.
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+pub struct StorageParameters(KeyValuePairs);
+
+impl_type_for_kvp_wrapper!(StorageParameters);
+
+impl Display for StorageParameters {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        f.write_str("WITH(")?;
+        for (key, value) in self.0.iter() {
+            write!(f, "{key}={value}")?;
+        }
+        f.write_char(')')
     }
 }
 
@@ -136,8 +283,8 @@ impl Display for StorageParameter {
 pub struct IndexParameters {
     /// Optional list of columns included in an index
     pub(crate) include: Option<Vec<String>>,
-    /// Optional list of [StorageParameter]s for the index
-    pub(crate) with: Option<Vec<StorageParameter>>,
+    /// Optional map of storage parameters for the index
+    pub(crate) with: Option<StorageParameters>,
     /// Optional tablespace specified for the index. [None] means the default tablespace is used
     pub(crate) tablespace: Option<TableSpace>,
 }
@@ -152,13 +299,8 @@ impl Display for IndexParameters {
             },
             _ => {},
         }
-        match &self.with {
-            Some(storage_parameters) if !storage_parameters.is_empty() => {
-                write!(f, " WITH(")?;
-                write_join!(f, storage_parameters, ",");
-                write!(f, ")")?;
-            },
-            _ => {},
+        if let Some(storage_parameters) = &self.with {
+            write!(f, "{storage_parameters}")?
         }
         if let Some(tablespace) = &self.tablespace {
             write!(f, " USING INDEX TABLESPACE {}", tablespace)?;
@@ -338,6 +480,16 @@ trait SqlObject: PartialEq {
             .filter(|d| !d.is_implicit_schema())
             .all(|d| completed_objects.contains(&d))
     }
+    /// Write the beginning of an `ALTER` statement based upon the object's
+    /// [SqlObject::object_type_name] and [SqlObject::name]. This can be overridden if the object
+    /// requires a more complex `ALTER` statement beginning
+    fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
+    where
+        W: Write,
+    {
+        write!(w, "ALTER {} {}", self.object_type_name(), self.name())?;
+        Ok(())
+    }
 }
 
 /// Database unique name as the combination of the object's owning schema and the name within the
@@ -455,81 +607,160 @@ impl Display for TableSpace {
 
 /// Compare the tablespace option of 2 objects. Writes the `SET TABLESPACE` command based on the 2
 /// states of the tablespace option.
-fn compare_tablespaces<W>(
+fn compare_tablespaces<S, W>(
+    object: &S,
     old: Option<&TableSpace>,
     new: Option<&TableSpace>,
     w: &mut W,
 ) -> Result<(), PgDiffError>
 where
+    S: SqlObject,
     W: Write,
 {
     match (old, new) {
         (Some(old_tablespace), Some(new_tablespace)) if old_tablespace != new_tablespace => {
-            write!(w, "SET TABLESPACE {new_tablespace}")?;
+            object.write_alter_prefix(w)?;
+            write!(w, " SET TABLESPACE {new_tablespace};")?;
         },
         (Some(_), None) => {
-            write!(w, "SET TABLESPACE pg_default")?;
+            object.write_alter_prefix(w)?;
+            write!(w, " SET TABLESPACE pg_default;")?;
         },
         (None, Some(new_tablespace)) => {
-            write!(w, "SET TABLESPACE {new_tablespace}")?;
+            object.write_alter_prefix(w)?;
+            write!(w, " SET TABLESPACE {new_tablespace};")?;
         },
         _ => {},
     }
     Ok(())
 }
 
-/// Trait with a single default method that writes the beginning of an `ALTER` statement based upon
-/// the object's [SqlObject::object_type_name] and [SqlObject::name].
-trait OptionListObject: SqlObject {
-    /// Write the beginning of an `ALTER` statement based upon the object's
-    /// [SqlObject::object_type_name] and [SqlObject::name]. This can be overridden if the object
-    /// requires a more complex `ALTER` statement beginning
-    fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
-    where
-        W: Write,
-    {
-        write!(w, "ALTER {} {}", self.object_type_name(), self.name())?;
-        Ok(())
-    }
-}
-
 /// Compare the old and new versions of an object's option list and write the required `SET`/`RESET`
 /// statements for the object.
-fn compare_option_lists<A, O, W>(
-    object: &A,
-    old: Option<&[O]>,
-    new: Option<&[O]>,
+fn compare_key_value_pairs<A, K, W>(
     w: &mut W,
+    object: &A,
+    old: &Option<K>,
+    new: &Option<K>,
+    within_brackets: bool,
 ) -> Result<(), PgDiffError>
 where
-    A: OptionListObject,
-    O: Display + PartialEq,
+    A: SqlObject,
+    K: Deref<Target = KeyValuePairs>,
     W: Write,
 {
-    if let Some(new_options) = new {
-        let old_options = old.unwrap_or_default();
-        object.write_alter_prefix(w)?;
+    match (
+        old.as_deref().map(|o| o.deref()),
+        new.as_deref().map(|n| n.deref()),
+    ) {
+        (Some(old_options), Some(new_options)) => {
+            set_key_value_pairs(
+                w,
+                object,
+                new_options.iter().filter(|(key, value)| {
+                    if let Some(old) = old_options.get(*key) {
+                        return old != *value;
+                    }
+                    true
+                }),
+                within_brackets,
+            )?;
+            reset_key_value_pairs(
+                w,
+                object,
+                old_options
+                    .iter()
+                    .filter(|(key, _)| !new_options.contains_key(*key)),
+                within_brackets,
+            )?;
+        },
+        (_, Some(new_options)) if !new_options.is_empty() => {
+            set_key_value_pairs(w, object, new_options.iter(), within_brackets)?;
+        },
+        (Some(old_options), _) if !old_options.is_empty() => {
+            reset_key_value_pairs(w, object, old_options.iter(), within_brackets)?;
+        },
+        _ => {},
+    };
+    Ok(())
+}
+
+fn set_key_value_pairs<'a, W, A, I>(
+    w: &'a mut W,
+    object: &'a A,
+    set_options: I,
+    within_brackets: bool,
+) -> Result<(), PgDiffError>
+where
+    W: Write,
+    A: SqlObject,
+    I: Iterator<Item = (&'a String, &'a String)>,
+{
+    let mut set_options: Vec<_> = set_options.collect();
+    if set_options.is_empty() {
+        return Ok(());
+    }
+
+    set_options.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+    object.write_alter_prefix(w)?;
+    if within_brackets {
         write_join!(
             w,
-            "SET (",
-            new_options.iter().filter(|p| old_options.contains(*p)),
+            " SET (",
+            set_options,
+            |write, (key, value)| write!(write, "{key}={value}"),
             ",",
             ");\n"
         );
+    } else {
+        write_join!(
+            w,
+            "\nSET ",
+            set_options,
+            |write, (key, value)| write!(write, "{key}={value}"),
+            "\nSET",
+            ";\n"
+        );
     }
-    if let Some(old_options) = old {
-        let new_options = new.unwrap_or_default();
-        object.write_alter_prefix(w)?;
-        w.write_str("RESET (")?;
-        for p in old_options.iter().filter(|p| new_options.contains(*p)) {
-            let option = p.to_string();
-            if let Some((first, _)) = option.split_once('=') {
-                w.write_str(first)?;
-            } else {
-                w.write_str(option.as_str())?;
-            }
-        }
-        w.write_str(");\n")?;
+    Ok(())
+}
+
+fn reset_key_value_pairs<'a, W, A, I>(
+    w: &'a mut W,
+    object: &'a A,
+    reset_options: I,
+    within_brackets: bool,
+) -> Result<(), PgDiffError>
+where
+    W: Write,
+    A: SqlObject,
+    I: Iterator<Item = (&'a String, &'a String)>,
+{
+    let mut reset_options: Vec<_> = reset_options.collect();
+    if reset_options.is_empty() {
+        return Ok(());
+    }
+
+    reset_options.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+    object.write_alter_prefix(w)?;
+    if within_brackets {
+        write_join!(
+            w,
+            " RESET (",
+            reset_options,
+            |write, (key, _)| write!(write, "{key}"),
+            ",",
+            ");\n"
+        );
+    } else {
+        write_join!(
+            w,
+            "\nRESET ",
+            reset_options,
+            |write, (key, _)| write!(write, "{key}"),
+            "\nRESET ",
+            ";\n"
+        );
     }
     Ok(())
 }
@@ -566,3 +797,6 @@ async fn check_names_in_database(
         .fetch_all(pool)
         .await
 }
+
+#[cfg(test)]
+mod test {}

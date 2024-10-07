@@ -6,8 +6,7 @@ use sqlx::{query_as, PgPool};
 use crate::PgDiffError;
 
 use super::{
-    compare_option_lists, compare_tablespaces, IndexParameters, OptionListObject,
-    SchemaQualifiedName, SqlObject,
+    compare_key_value_pairs, compare_tablespaces, IndexParameters, SchemaQualifiedName, SqlObject,
 };
 
 /// Fetch all indexes associated with the tables specified (as table OID)
@@ -53,8 +52,6 @@ impl PartialEq for Index {
     }
 }
 
-impl OptionListObject for Index {}
-
 impl SqlObject for Index {
     fn name(&self) -> &SchemaQualifiedName {
         &self.schema_qualified_name
@@ -78,13 +75,9 @@ impl SqlObject for Index {
             && self.parameters.include == new.parameters.include
             && self.parameters.with != new.parameters.with
         {
-            compare_option_lists(
-                self,
-                self.parameters.with.as_deref(),
-                new.parameters.with.as_deref(),
-                w,
-            )?;
+            compare_key_value_pairs(w, self, &self.parameters.with, &new.parameters.with, true)?;
             compare_tablespaces(
+                self,
                 self.parameters.tablespace.as_ref(),
                 new.parameters.tablespace.as_ref(),
                 w,
@@ -100,5 +93,97 @@ impl SqlObject for Index {
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(w, "DROP INDEX {};", self.schema_qualified_name)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use sqlx::postgres::types::Oid;
+
+    use crate::object::{IndexParameters, SchemaQualifiedName, SqlObject, TableSpace};
+
+    use super::Index;
+
+    const SCHEMA: &str = "test_schema";
+    const TABLE: &str = "test_table";
+    const NAME: &str = "test_index";
+    const TABLESPACE_1: &str = "tbl_space";
+    const TABLESPACE_2: &str = "other_tbl_space";
+    const OPTION_1_1: &str = "fillfactor=100";
+    const OPTION_1_2: &str = "fillfactor=90";
+    const OPTION_2_1: &str = "buffering=ON";
+    const OPTION_2_2: &str = "buffering=OFF";
+
+    fn create_index(with: Option<Vec<&str>>, tablespace: Option<&str>) -> Index {
+        Index {
+            table_oid: Oid(1),
+            owner_table_name: SchemaQualifiedName::new(SCHEMA, TABLE),
+            schema_qualified_name: SchemaQualifiedName::new(SCHEMA, NAME),
+            columns: vec![],
+            definition_statement: String::from(""),
+            parameters: IndexParameters {
+                include: None,
+                with: with.map(|w| w.as_slice().into()),
+                tablespace: tablespace.map(|t| TableSpace(t.into())),
+            },
+            dependencies: vec![],
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(
+        create_index(
+            None,
+            None,
+        ),
+        create_index(
+            Some(vec![OPTION_1_1, OPTION_2_1]),
+            Some(TABLESPACE_1),
+        ),
+        include_str!("../../test-files/sql/index-alter-case1.pgsql"),
+    )]
+    #[case(
+        create_index(
+            Some(vec![OPTION_1_1, OPTION_2_1]),
+            Some(TABLESPACE_1),
+        ),
+        create_index(
+            Some(vec![OPTION_1_2, OPTION_2_2]),
+            Some(TABLESPACE_2),
+        ),
+        include_str!("../../test-files/sql/index-alter-case2.pgsql"),
+    )]
+    #[case(
+        create_index(
+            Some(vec![OPTION_1_1, OPTION_2_1]),
+            Some(TABLESPACE_1),
+        ),
+        create_index(
+            None,
+            None,
+        ),
+        include_str!("../../test-files/sql/index-alter-case3.pgsql"),
+    )]
+    #[case(
+        create_index(
+            Some(vec![OPTION_1_1]),
+            None,
+        ),
+        create_index(
+            Some(vec![OPTION_2_2]),
+            None,
+        ),
+        include_str!("../../test-files/sql/index-alter-case4.pgsql"),
+    )]
+    fn alter_statements_should_add_alter_index_statement(
+        #[case] old: Index,
+        #[case] new: Index,
+        #[case] statement: &str,
+    ) {
+        let mut writeable = String::new();
+
+        old.alter_statements(&new, &mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
     }
 }

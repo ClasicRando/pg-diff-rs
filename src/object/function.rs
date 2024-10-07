@@ -9,10 +9,10 @@ use sqlx::{query_as, Decode, PgPool, Postgres};
 
 use crate::object::plpgsql::{parse_plpgsql_function, PlPgSqlFunction};
 use crate::object::table::get_table_by_qualified_name;
-use crate::{write_join, PgDiffError};
+use crate::{impl_type_for_kvp_wrapper, write_join, PgDiffError};
 
 use super::{
-    check_names_in_database, compare_option_lists, is_verbose, OptionListObject,
+    check_names_in_database, compare_key_value_pairs, is_verbose, KeyValuePairs,
     SchemaQualifiedName, SqlObject, PG_CATALOG_SCHEMA_NAME,
 };
 
@@ -144,6 +144,28 @@ impl<'s> Display for FunctionArgument<'s> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct FunctionConfig(KeyValuePairs);
+
+impl_type_for_kvp_wrapper!(FunctionConfig);
+
+impl Display for FunctionConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        write_join!(
+            f,
+            "\nSET ",
+            self.0.iter(),
+            |w, (key, value)| write!(w, "{key}={value}"),
+            "\nSET ",
+            ""
+        );
+        Ok(())
+    }
+}
+
 /// Postgresql function object. This includes procedures which are highlighted with the
 /// `is_procedure` field.
 #[derive(Debug, PartialEq, sqlx::FromRow)]
@@ -182,7 +204,7 @@ pub struct Function {
     #[sqlx(json)]
     pub(crate) source_code: FunctionSourceCode,
     /// Function configuration option
-    pub(crate) config: Option<Vec<String>>,
+    pub(crate) config: Option<FunctionConfig>,
     /// Function dependencies found in database. This can be updated later is `source_code` can be
     /// analyzed.
     #[sqlx(json)]
@@ -358,9 +380,7 @@ impl Function {
         }
         writeln!(w, "{}", self.security.as_ref())?;
         if let Some(config) = &self.config {
-            for parameter in config {
-                writeln!(w, "SET {parameter}")?;
-            }
+            write!(w, "{config}")?;
         }
 
         let arguments = if rewrite_code {
@@ -370,25 +390,6 @@ impl Function {
         };
         self.source_code.format(w, arguments)?;
 
-        Ok(())
-    }
-}
-
-impl OptionListObject for Function {
-    /// Override the alter prefix to include the variance in object type name (`FUNCTION` vs
-    /// `PROCEDURE`) and the required argument list to distinguish between function overloads when
-    /// altering.
-    fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
-    where
-        W: Write,
-    {
-        write!(
-            w,
-            "ALTER {} {}({})",
-            self.object_type_name(),
-            self.name,
-            self.arguments
-        )?;
         Ok(())
     }
 }
@@ -431,7 +432,7 @@ impl SqlObject for Function {
             )?;
         }
 
-        compare_option_lists(self, self.config.as_deref(), new.config.as_deref(), w)?;
+        compare_key_value_pairs(w, self, &self.config, &new.config, false)?;
 
         if self.is_procedure {
             return Ok(());
@@ -504,6 +505,23 @@ impl SqlObject for Function {
 
     fn drop_statements<W: Write>(&self, w: &mut W) -> Result<(), PgDiffError> {
         writeln!(w, "DROP {} {};", self.object_type_name(), self.name)?;
+        Ok(())
+    }
+
+    /// Override the alter prefix to include the variance in object type name (`FUNCTION` vs
+    /// `PROCEDURE`) and the required argument list to distinguish between function overloads when
+    /// altering.
+    fn write_alter_prefix<W>(&self, w: &mut W) -> Result<(), PgDiffError>
+    where
+        W: Write,
+    {
+        write!(
+            w,
+            "ALTER {} {}({})",
+            self.object_type_name(),
+            self.name,
+            self.arguments
+        )?;
         Ok(())
     }
 }
@@ -724,3 +742,6 @@ pub enum FunctionSecurity {
 }
 
 impl_type_for_bool!(FunctionSecurity, FunctionSecurity::Definer);
+
+#[cfg(test)]
+mod test {}

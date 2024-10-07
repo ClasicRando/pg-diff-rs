@@ -10,8 +10,8 @@ use crate::{map_join_slice, write_join, PgDiffError};
 
 use super::sequence::SequenceOptions;
 use super::{
-    check_names_in_database, compare_tablespaces, Collation, OptionListObject, SchemaQualifiedName,
-    SqlObject, StorageParameter, TableSpace,
+    check_names_in_database, compare_tablespaces, Collation, SchemaQualifiedName, SqlObject,
+    StorageParameters, TableSpace,
 };
 
 /// Fetch all tables that are found in the specified schemas.
@@ -64,7 +64,7 @@ pub struct Table {
     /// Optional tablespace to store this table. [None] means the default tablespace is used.
     pub(crate) tablespace: Option<TableSpace>,
     /// Optional storage parameters for this table
-    pub(crate) with: Option<Vec<StorageParameter>>,
+    pub(crate) with: Option<StorageParameters>,
     /// Dependencies of this table
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
 }
@@ -96,7 +96,7 @@ impl<'r> FromRow<'r, PgRow> for Table {
         let partitioned_parent_table: Option<Json<SchemaQualifiedName>> =
             row.try_get("partitioned_parent_table")?;
         let tablespace: Option<TableSpace> = row.try_get("tablespace")?;
-        let with: Option<Vec<StorageParameter>> = row.try_get("with")?;
+        let with: Option<StorageParameters> = row.try_get("with")?;
         let dependencies: Json<Vec<SchemaQualifiedName>> = row.try_get("dependencies")?;
         Ok(Self {
             oid,
@@ -112,8 +112,6 @@ impl<'r> FromRow<'r, PgRow> for Table {
         })
     }
 }
-
-impl OptionListObject for Table {}
 
 impl SqlObject for Table {
     fn name(&self) -> &SchemaQualifiedName {
@@ -163,9 +161,7 @@ impl SqlObject for Table {
             write!(w, "\nPARTITION BY {partition_key_def}")?;
         }
         if let Some(storage_parameter) = &self.with {
-            w.write_str("\nWITH (")?;
-            write_join!(w, storage_parameter, ",");
-            w.write_str(")")?;
+            write!(w, "{storage_parameter}")?;
         }
         if let Some(tablespace) = &self.tablespace {
             write!(w, "\nTABLESPACE {}", tablespace)?;
@@ -240,7 +236,7 @@ impl SqlObject for Table {
             }
         }
 
-        compare_tablespaces(self.tablespace.as_ref(), new.tablespace.as_ref(), w)?;
+        compare_tablespaces(self, self.tablespace.as_ref(), new.tablespace.as_ref(), w)?;
         Ok(())
     }
 
@@ -591,3 +587,6 @@ pub enum Compression {
     #[strum(serialize = "COMPRESSION lz4")]
     LZ4,
 }
+
+#[cfg(test)]
+mod test {}

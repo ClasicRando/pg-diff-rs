@@ -1,11 +1,11 @@
-use std::fmt::Write;
+use std::fmt::{Display, Formatter, Write};
 
 use sqlx::postgres::types::Oid;
 use sqlx::{query_as, PgPool};
 
-use crate::{write_join, PgDiffError};
+use crate::{impl_type_for_kvp_wrapper, write_join, PgDiffError};
 
-use super::{compare_option_lists, OptionListObject, SchemaQualifiedName, SqlObject};
+use super::{compare_key_value_pairs, KeyValuePairs, SchemaQualifiedName, SqlObject};
 
 /// Fetch all views found within the specified schemas
 pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgDiffError> {
@@ -18,6 +18,28 @@ pub async fn get_views(pool: &PgPool, schemas: &[&str]) -> Result<Vec<View>, PgD
         },
     };
     Ok(views)
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ViewOptions(KeyValuePairs);
+
+impl_type_for_kvp_wrapper!(ViewOptions);
+
+impl Display for ViewOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        write_join!(
+            f,
+            "WITH(",
+            self.0.iter(),
+            |w, (key, value)| write!(w, "{key}={value}"),
+            ",",
+            ")"
+        );
+        Ok(())
+    }
 }
 
 /// Struct representing a SQL view
@@ -33,7 +55,7 @@ pub struct View {
     /// Query representing the view result
     pub(crate) query: String,
     /// View options supplied. All items are key value pairs separated by `=`
-    pub(crate) options: Option<Vec<String>>,
+    pub(crate) options: Option<ViewOptions>,
     /// Dependencies of the view
     #[sqlx(json)]
     pub(crate) dependencies: Vec<SchemaQualifiedName>,
@@ -48,8 +70,6 @@ impl PartialEq for View {
             && self.options == other.options
     }
 }
-
-impl OptionListObject for View {}
 
 impl SqlObject for View {
     fn name(&self) -> &SchemaQualifiedName {
@@ -70,22 +90,19 @@ impl SqlObject for View {
             write_join!(w, "(", columns, ",", ")");
         }
         if let Some(options) = &self.options {
-            write_join!(w, "WITH (", options, ",", ")");
+            write!(w, "{options}")?;
         }
         writeln!(w, " AS\n{}", self.query)?;
         Ok(())
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
-        if self.columns != new.columns {
+        if self.query != new.query || self.columns != new.columns {
             self.drop_statements(w)?;
             self.create_statements(w)?;
             return Ok(());
         }
-        if self.query != new.query {
-            self.create_statements(w)?;
-        }
-        compare_option_lists(self, self.options.as_deref(), new.options.as_deref(), w)?;
+        compare_key_value_pairs(w, self, &self.options, &new.options, false)?;
         Ok(())
     }
 
@@ -94,3 +111,6 @@ impl SqlObject for View {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {}
