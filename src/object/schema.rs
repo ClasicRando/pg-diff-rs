@@ -82,3 +82,57 @@ impl SqlObject for Schema {
         true
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::object::{SchemaQualifiedName, SqlObject};
+    use super::Schema;
+
+    const SCHEMA_NAME: &str = "test_schema";
+    
+    const TEST_USER: &str = "test_user";
+    
+    const OTHER_TEST_USER: &str = "other_test_user";
+    
+    fn create_schema(owner: String) -> Schema {
+        Schema {
+            name: SchemaQualifiedName::new(SCHEMA_NAME, ""),
+            owner,
+        }
+    }
+
+    #[test]
+    fn create_statements_should_add_create_schema_statement() {
+        let schema = create_schema(TEST_USER.to_string());
+        let statement = include_str!("../../test-files/sql/schema-create.pgsql");
+        let mut writeable = String::new();
+
+        schema.create_statements(&mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
+    }
+
+
+    #[test]
+    fn alter_statements_should_add_alter_schema_statement() {
+        let old = create_schema(TEST_USER.to_string());
+        let new = create_schema(OTHER_TEST_USER.to_string());
+        let statement = include_str!("../../test-files/sql/schema-alter.pgsql");
+        let mut writeable = String::new();
+
+        old.alter_statements(&new, &mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
+    }
+
+    #[test]
+    fn drop_statements_should_add_drop_schema_statement() {
+        let schema = create_schema(TEST_USER.to_string());
+        let statement = include_str!("../../test-files/sql/schema-drop.pgsql");
+        let mut writeable = String::new();
+
+        schema.drop_statements(&mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
+    }
+}

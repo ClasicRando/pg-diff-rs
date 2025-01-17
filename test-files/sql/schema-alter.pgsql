@@ -1,0 +1,1 @@
+ALTER SCHEMA test_schema OWNER TO other_test_user;
