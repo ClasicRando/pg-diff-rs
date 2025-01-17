@@ -8,10 +8,10 @@ use pg_query::protobuf::{node::Node, ConstrType, RangeVar};
 use serde::Deserialize;
 use sqlx::postgres::types::Oid;
 use sqlx::postgres::PgDatabaseError;
-use sqlx::types::Uuid;
 use sqlx::{query_as, query_scalar, Error, PgPool};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
 
 use crate::object::{
     find_index, get_constraints, get_extensions, get_functions, get_indexes, get_policies,
@@ -72,10 +72,8 @@ impl DatabaseMigration {
             .apply_to_temp_database(&temp_db_pool)
             .await?;
         let source_control_temp_database = Database::from_connection(&temp_db_pool).await?;
-        let migration_script = self
-            .database
-            .compare_to_other_database(&source_control_temp_database)?;
-        Ok(migration_script)
+        self.database
+            .compare_to_other_database(&source_control_temp_database)
     }
 
     async fn create_temp_database(&self) -> Result<(), PgDiffError> {

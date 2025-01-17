@@ -91,11 +91,9 @@ impl SqlObject for Policy {
     }
 
     fn alter_statements<W: Write>(&self, new: &Self, w: &mut W) -> Result<(), PgDiffError> {
-        println!("{:?}", self);
-        println!("{new:?}");
         if self.is_permissive != new.is_permissive || self.command != new.command {
             self.drop_statements(w)?;
-            self.create_statements(w)?;
+            new.create_statements(w)?;
             return Ok(());
         }
         write!(
@@ -134,4 +132,150 @@ pub enum PolicyCommand {
     Delete,
     #[strum(serialize = "ALL")]
     All,
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Policy, PolicyCommand};
+    use crate::object::{SchemaQualifiedName, SqlObject};
+    use sqlx::postgres::types::Oid;
+
+    const SCHEMA: &str = "test_schema";
+    const TABLE: &str = "test_table";
+    const NAME: &str = "test_policy";
+    const PUBLIC: &str = "PUBLIC";
+
+    fn create_policy(
+        is_permissive: bool,
+        applies_to: Vec<String>,
+        command: PolicyCommand,
+        check_expression: Option<String>,
+        using_expression: Option<String>,
+    ) -> Policy {
+        Policy {
+            table_oid: Oid(1),
+            name: NAME.to_string(),
+            schema_qualified_name: SchemaQualifiedName::new(SCHEMA, NAME),
+            owner_table_name: SchemaQualifiedName::new(SCHEMA, TABLE),
+            is_permissive,
+            applies_to,
+            command,
+            check_expression,
+            using_expression,
+            columns: vec![],
+            dependencies: vec![],
+        }
+    }
+
+    #[rstest::rstest]
+    #[case(
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            None,
+        ),
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            Some("column IS NULL".to_string()),
+            None,
+        ),
+        include_str!("../../test-files/sql/policy-alter-case1.pgsql"),
+    )]
+    #[case(
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            None,
+        ),
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            Some("column IS NULL".to_string()),
+        ),
+        include_str!("../../test-files/sql/policy-alter-case2.pgsql"),
+    )]
+    #[case(
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            None,
+        ),
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            Some("column IS NULL".to_string()),
+            Some("column IS NULL".to_string()),
+        ),
+        include_str!("../../test-files/sql/policy-alter-case3.pgsql"),
+    )]
+    fn alter_statements_should_add_alter_policy_statement_when_alterable(
+        #[case] old: Policy,
+        #[case] new: Policy,
+        #[case] statement: &str,
+    ) {
+        let mut writeable = String::new();
+
+        old.alter_statements(&new, &mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
+    }
+
+
+    #[rstest::rstest]
+    #[case(
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            None,
+        ),
+        create_policy(
+            false,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            Some("column IS NULL".to_string()),
+            None,
+        ),
+        include_str!("../../test-files/sql/policy-alter-case4.pgsql"),
+    )]
+    #[case(
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Insert,
+            None,
+            None,
+        ),
+        create_policy(
+            true,
+            vec![PUBLIC.to_string()],
+            PolicyCommand::Update,
+            None,
+            Some("column IS NULL".to_string()),
+        ),
+        include_str!("../../test-files/sql/policy-alter-case5.pgsql"),
+    )]
+    fn alter_statements_should_add_drop_and_create_policy_statements_when_not_alterable(
+        #[case] old: Policy,
+        #[case] new: Policy,
+        #[case] statement: &str,
+    ) {
+        let mut writeable = String::new();
+
+        old.alter_statements(&new, &mut writeable).unwrap();
+
+        assert_eq!(statement.trim(), writeable.trim());
+    }
 }
